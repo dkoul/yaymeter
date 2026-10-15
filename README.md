@@ -143,7 +143,8 @@ jmeter -n \
   -j results/jmeter.log \
   -Jyaymeter.threads=1 \
   -Jyaymeter.ramp_seconds=1 \
-  -Jyaymeter.loops=1
+  -Jyaymeter.loops=1 \
+  -Jyaymeter.auth_token="$API_TEST_AUTH_TOKEN"
 ```
 
 **Load job** (nightly or gated)

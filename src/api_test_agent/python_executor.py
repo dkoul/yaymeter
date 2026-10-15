@@ -36,9 +36,14 @@ def _request(
 
         url += "?" + urlencode(test.request.query)
 
-    headers = dict(test.request.headers)
+    headers = {k: v for k, v in test.request.headers.items() if not k.startswith("_yaymeter")}
     headers.setdefault("Content-Type", test.request.body_content_type or "application/json")
-    if auth_token:
+    auth_mode = test.request.headers.get("_yaymeter_auth_mode")
+    if auth_mode == "none":
+        pass
+    elif auth_mode == "invalid":
+        headers.setdefault("Authorization", "Bearer yaymeter-invalid-token")
+    elif auth_token:
         headers.setdefault("Authorization", f"Bearer {auth_token}")
 
     data = None

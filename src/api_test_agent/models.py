@@ -174,6 +174,7 @@ class NormalizedResults(BaseModel):
     run_id: str
     records: list[ResultRecord] = Field(default_factory=list)
     summary: dict[str, int] = Field(default_factory=dict)
+    load_stats: dict[str, float | int] = Field(default_factory=dict)
 
 
 class RunManifest(BaseModel):
