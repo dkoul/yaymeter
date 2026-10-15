@@ -13,4 +13,9 @@ yaymeter install-runtime
 
 Helpers: `.tools/runtime-env.sh` (and legacy `.tools/jmeter-env.sh`). Subprocess runs set `JAVA_HOME` / `JMETER_HOME` automatically when `.tools/` is present.
 
+macOS notes:
+
+- Temurin JRE archives use `jdk-<ver>/Contents/Home`; yaymeter resolves that layout when writing `JAVA_HOME`.
+- If Python’s SSL store is missing (common on stock macOS Python), downloads retry once without certificate verification.
+
 Skill script: `install_runtime.py`

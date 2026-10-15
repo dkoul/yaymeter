@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -29,6 +30,64 @@ DEFAULT_JAVA_FEATURE = "21"
 
 class JMeterInstallError(Exception):
     pass
+
+
+def _is_ssl_verify_error(exc: BaseException) -> bool:
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return True
+    if isinstance(exc, URLError) and isinstance(exc.reason, ssl.SSLCertVerificationError):
+        return True
+    message = str(exc)
+    return "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify failed" in message.lower()
+
+
+def _unverified_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def download_bytes(url: str, timeout: float) -> bytes:
+    """
+    Fetch URL bytes, retrying without certificate verification on typical macOS/Python SSL failures.
+    """
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except ssl.SSLCertVerificationError:
+        pass
+    except (URLError, TimeoutError, OSError) as exc:
+        if not _is_ssl_verify_error(exc):
+            raise
+    with urlopen(url, timeout=timeout, context=_unverified_ssl_context()) as response:
+        return response.read()
+
+
+def resolve_jdk_home(candidate: Path) -> Path | None:
+    """
+    Normalize a Temurin JRE/JDK extract to JAVA_HOME.
+
+    macOS archives use ``jdk-<ver>/Contents/Home``; Linux uses ``jdk-<ver>/`` directly.
+    """
+    if (candidate / "bin" / "java").is_file():
+        return candidate
+    nested = candidate / "Contents" / "Home"
+    if (nested / "bin" / "java").is_file():
+        return nested
+    return None
+
+
+def discover_jdk_home(tools_dir: Path) -> Path | None:
+    """Find the newest bundled jdk-* directory under tools_dir."""
+    homes: list[Path] = []
+    for candidate in tools_dir.glob("jdk-*"):
+        resolved = resolve_jdk_home(candidate)
+        if resolved:
+            homes.append(resolved)
+    if not homes:
+        return None
+    return max(homes, key=lambda p: p.stat().st_mtime)
 
 
 def parse_version(version: str) -> tuple[int, ...]:
@@ -74,13 +133,11 @@ def read_local_java_home(tools_dir: Path | None = None) -> Path | None:
         return None
     marker = tools / JAVA_HOME_FILE
     if marker.is_file():
-        home = Path(marker.read_text(encoding="utf-8").strip())
+        raw = Path(marker.read_text(encoding="utf-8").strip())
+        home = resolve_jdk_home(raw) or raw
         if (home / "bin" / "java").exists():
             return home
-    for candidate in sorted(tools.glob("jdk-*")):
-        if (candidate / "bin" / "java").exists():
-            return candidate
-    return None
+    return discover_jdk_home(tools)
 
 
 def find_java(tools_dir: Path | None = None) -> str | None:
@@ -151,20 +208,19 @@ def install_portable_java(
     with tempfile.TemporaryDirectory() as tmp:
         archive_path = Path(tmp) / "temurin-jre.tar.gz"
         try:
-            with urlopen(url, timeout=300) as response:
-                archive_path.write_bytes(response.read())
+            archive_path.write_bytes(download_bytes(url, timeout=300))
         except (URLError, TimeoutError, OSError) as exc:
             raise JMeterInstallError(f"Could not download portable JRE: {exc}") from exc
 
         with tarfile.open(archive_path, "r:gz") as tar:
             tar.extractall(path=tools_dir)
 
-    jdk_dirs = sorted(tools_dir.glob("jdk-*"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not jdk_dirs:
-        raise JMeterInstallError("Portable JRE archive did not extract a jdk-* directory")
-    home = jdk_dirs[0]
-    if not (home / "bin" / "java").exists():
-        raise JMeterInstallError(f"Portable JRE missing java binary under {home}")
+    home = discover_jdk_home(tools_dir)
+    if not home:
+        raise JMeterInstallError(
+            "Portable JRE archive did not extract a usable jdk-* directory "
+            "(expected bin/java or Contents/Home/bin/java on macOS)"
+        )
 
     (tools_dir / JAVA_HOME_FILE).write_text(str(home.resolve()) + "\n", encoding="utf-8")
     return home
@@ -250,8 +306,7 @@ def download_jmeter_archive(version: str, dest: Path) -> Path:
     last_error: Exception | None = None
     for url in jmeter_download_urls(version):
         try:
-            with urlopen(url, timeout=120) as response:
-                dest.write_bytes(response.read())
+            dest.write_bytes(download_bytes(url, timeout=120))
             return dest
         except (URLError, TimeoutError, OSError) as exc:
             last_error = exc
