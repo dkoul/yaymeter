@@ -21,6 +21,9 @@ Use this skill to inspect an OpenAPI spec, build a deterministic test plan, obta
 pip install -e ".[dev]"
 yaymeter check-environment
 yaymeter inspect --spec <spec>
+# MCP: yaymeter inspect --mcp-url <url> --out mcp-inventory.json
+# then: yaymeter plan --inventory mcp-inventory.json --config <config> --out generated-tests/plan.json
+# run: yaymeter run --plan ... --executor mcp --approve
 yaymeter plan --spec <spec> --config <config> --out generated-tests/plan.json
 yaymeter validate-plan --plan generated-tests/plan.json
 yaymeter export-jmx --plan generated-tests/plan.json --out generated-tests/plan.jmx

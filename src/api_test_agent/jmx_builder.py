@@ -131,7 +131,14 @@ def build_jmx(
 
     _append_header_manager(tg_ht, auth_header_entries(auth), "HTTP Header Manager")
 
-    executable = [t for t in plan.test_cases if not t.blocked and t.category.value != "contract"]
+    executable = [
+        t
+        for t in plan.test_cases
+        if not t.blocked
+        and t.category.value != "contract"
+        and not t.request.mcp_tool
+        and t.category.value not in ("mcp-protocol", "mcp-metadata")
+    ]
     if profile == "functional":
         executable = [t for t in executable if t.category.value != "performance"]
 

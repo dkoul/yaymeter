@@ -122,6 +122,11 @@ def _test_id(category: str, operation_id: str, suffix: str) -> str:
 
 
 def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
+    if inventory.inventory_kind == "mcp":
+        from api_test_agent.mcp_plan import generate_mcp_plan
+
+        return generate_mcp_plan(inventory, config)
+
     rng = random.Random(config.seed)
     cases: list[TestCase] = []
     order = 0
@@ -434,6 +439,7 @@ def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
             )
 
     return TestPlan(
+        transport="http",
         spec_hash=inventory.spec_hash,
         config_hash=config.config_hash(),
         seed=config.seed,

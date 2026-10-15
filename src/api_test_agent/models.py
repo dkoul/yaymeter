@@ -37,11 +37,21 @@ class ResponseModel(BaseModel):
     inline_schema: dict[str, Any] | None = None
 
 
+class McpTransportConfig(BaseModel):
+    kind: Literal["streamable_http", "stdio"]
+    url: str | None = None
+    command: list[str] = Field(default_factory=list)
+
+
 class OperationModel(BaseModel):
     operation_id: str
     method: str
     path: str
     summary: str | None = None
+    mcp_tool_name: str | None = None
+    mcp_description: str | None = None
+    mcp_read_only_hint: bool | None = None
+    mcp_destructive_hint: bool | None = None
     parameters: list[ParameterModel] = Field(default_factory=list)
     request_body_content_types: list[str] = Field(default_factory=list)
     request_body_schema: dict[str, Any] | None = None
@@ -52,11 +62,14 @@ class OperationModel(BaseModel):
 
 class ApiInventory(BaseModel):
     schema_version: str = SchemaVersion.INVENTORY.value
+    inventory_kind: Literal["openapi", "mcp"] = "openapi"
     title: str | None = None
     openapi_version: str
     spec_hash: str
     servers: list[str] = Field(default_factory=list)
     operations: list[OperationModel] = Field(default_factory=list)
+    mcp_transport: McpTransportConfig | None = None
+    mcp_server_capabilities: dict[str, Any] | None = None
 
 
 class TestCategory(str, Enum):
@@ -67,6 +80,8 @@ class TestCategory(str, Enum):
     WORKFLOW = "workflow"
     SECURITY_BASIC = "security-basic"
     PERFORMANCE = "performance"
+    MCP_PROTOCOL = "mcp-protocol"
+    MCP_METADATA = "mcp-metadata"
 
 
 class ExpectationSource(str, Enum):
@@ -95,12 +110,19 @@ class TestRequest(BaseModel):
     query: dict[str, str] = Field(default_factory=dict)
     body: Any | None = None
     body_content_type: str | None = "application/json"
+    mcp_tool: str | None = None
+    mcp_arguments: dict[str, Any] | None = None
+    mcp_protocol_step: str | None = None
+    mcp_raw_jsonrpc: dict[str, Any] | None = None
 
 
 class TestExpected(BaseModel):
     status_codes: list[int] = Field(default_factory=list)
     response_schema: dict[str, Any] | None = None
     required_headers: list[str] = Field(default_factory=list)
+    mcp_expect_error: bool = False
+    mcp_jsonrpc_error_code: int | None = None
+    mcp_is_error: bool | None = None
 
 
 class CoverageTargets(BaseModel):
@@ -131,12 +153,14 @@ class TestCase(BaseModel):
 
 class TestPlan(BaseModel):
     schema_version: str = SchemaVersion.PLAN.value
+    transport: Literal["http", "mcp"] = "http"
     spec_hash: str
     config_hash: str
     seed: int
     generator_version: str
     base_url: str
     created_at: str
+    mcp_transport: McpTransportConfig | None = None
     test_cases: list[TestCase] = Field(default_factory=list)
 
 

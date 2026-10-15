@@ -10,7 +10,9 @@ from pathlib import Path
 import click
 
 from api_test_agent import __version__
-from api_test_agent.api_inventory import inventory_to_json
+from api_test_agent.api_inventory import inventory_to_json, load_inventory_json
+from api_test_agent.mcp_executor import execute_mcp_plan
+from api_test_agent.mcp_inventory import McpInventoryError, fetch_mcp_inventory, transport_from_cli
 from api_test_agent.config import load_config
 from api_test_agent.coverage import compute_coverage
 from api_test_agent.jmeter_install import (
@@ -139,11 +141,27 @@ def install_jmeter_cmd(
 
 
 @main.command("inspect")
-@click.option("--spec", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--spec", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--mcp-url", default=None, help="Streamable HTTP MCP endpoint URL")
+@click.option("--mcp-stdio", default=None, help='Stdio server command, e.g. "npx -y @modelcontextprotocol/server-everything"')
 @click.option("--out", type=click.Path(path_type=Path), default=None, help="Write inventory JSON")
-def inspect_cmd(spec: Path, out: Path | None) -> None:
-    """Validate spec and print operation inventory."""
-    inventory = load_inventory(spec)
+def inspect_cmd(
+    spec: Path | None,
+    mcp_url: str | None,
+    mcp_stdio: str | None,
+    out: Path | None,
+) -> None:
+    """Validate OpenAPI or list tools from a live MCP server."""
+    try:
+        if mcp_url or mcp_stdio:
+            transport = transport_from_cli(mcp_url, mcp_stdio)
+            inventory = fetch_mcp_inventory(transport)
+        elif spec:
+            inventory = load_inventory(spec)
+        else:
+            raise click.ClickException("Provide --spec or --mcp-url / --mcp-stdio")
+    except (McpInventoryError, ImportError) as exc:
+        raise click.ClickException(str(exc)) from exc
     text = inventory_to_json(inventory)
     if out:
         out.write_text(text + "\n", encoding="utf-8")
@@ -153,17 +171,25 @@ def inspect_cmd(spec: Path, out: Path | None) -> None:
 
 
 @main.command("plan")
-@click.option("--spec", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--spec", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--inventory", type=click.Path(exists=True, path_type=Path), default=None)
 @click.option("--config", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--out", required=True, type=click.Path(path_type=Path))
-def plan_cmd(spec: Path, config: Path, out: Path) -> None:
-    """Generate deterministic test plan JSON."""
-    inventory = load_inventory(spec)
+def plan_cmd(spec: Path | None, inventory: Path | None, config: Path, out: Path) -> None:
+    """Generate deterministic test plan JSON from OpenAPI or MCP inventory."""
+    if inventory:
+        inv = load_inventory_json(inventory)
+    elif spec:
+        inv = load_inventory(spec)
+    else:
+        raise click.ClickException("Provide --spec or --inventory")
     cfg = load_config(config)
-    plan = generate_plan(inventory, cfg)
+    plan = generate_plan(inv, cfg)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(plan_to_json(plan) + "\n", encoding="utf-8")
     click.echo(f"Wrote {len(plan.test_cases)} test cases to {out}")
+    if plan.transport == "mcp":
+        click.echo("MCP plan: run with `yaymeter run --executor mcp` (JMeter export skips MCP cases)")
 
 
 @main.command("export-jmx")
@@ -275,9 +301,9 @@ def validate_plan_cmd(plan: Path) -> None:
 @click.option("--approve", is_flag=True, help="Approve mutations or performance tests")
 @click.option(
     "--executor",
-    type=click.Choice(["jmeter", "python"]),
+    type=click.Choice(["jmeter", "python", "mcp"]),
     default="jmeter",
-    help="jmeter (default; auto-installs portable JRE+JMeter in .tools/) or python",
+    help="jmeter (default), python (HTTP), or mcp (Model Context Protocol)",
 )
 @click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
 @click.option("--run-id", default=None, help="Optional run id")
@@ -294,6 +320,15 @@ def run_cmd(
     cfg = load_config(config)
     model = TestPlan.model_validate(json.loads(plan.read_text(encoding="utf-8")))
     validate_plan_for_run(model, cfg, profile, approve)
+
+    if model.transport == "mcp":
+        executor = "mcp"
+    if profile == "performance" and executor in ("python", "mcp"):
+        raise click.ClickException("Performance profile requires JMeter executor")
+    if executor == "mcp" and profile == "performance":
+        raise click.ClickException(
+            "MCP load testing via JMeter is not implemented; use functional profile"
+        )
 
     if profile == "performance" and executor == "python":
         click.echo(
@@ -331,11 +366,20 @@ def run_cmd(
         artifacts={"jmx": str(jmx_path)},
     )
 
-    if executor == "python":
+    if executor == "mcp":
+        try:
+            results = execute_mcp_plan(model, cfg, out_run, run_id, cfg.target_label)
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
+        manifest.artifacts["results_json"] = str(out_run / "results.json")
+        manifest.artifacts["executor"] = "mcp"
+    elif executor == "python":
         results = execute_plan(model, cfg, out_run, run_id, cfg.target_label)
         manifest.artifacts["results_json"] = str(out_run / "results.json")
         manifest.artifacts["executor"] = "python"
     else:
+        if model.transport == "mcp":
+            raise click.ClickException("MCP plans require --executor mcp")
         if not find_jmeter():
             click.echo(
                 "Setting up portable Java + JMeter in .tools/ (one-time download)...",

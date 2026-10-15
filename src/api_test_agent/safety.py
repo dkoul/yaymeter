@@ -48,7 +48,8 @@ def validate_plan_for_run(
     profile: str,
     approve: bool,
 ) -> None:
-    validate_target_url(plan.base_url, config)
+    if plan.transport != "mcp":
+        validate_target_url(plan.base_url, config)
 
     if profile == "performance":
         if not config.allow_performance:

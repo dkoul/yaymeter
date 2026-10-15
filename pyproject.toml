@@ -25,6 +25,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
 ]
+mcp = [
+    "mcp>=1.6",
+]
 
 [project.scripts]
 yaymeter = "api_test_agent.cli:main"
