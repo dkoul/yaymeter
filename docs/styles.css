@@ -143,13 +143,6 @@ a:hover {
   line-height: 0;
 }
 
-.hero-logo-frame {
-  padding: 0.65rem 1rem;
-  margin-bottom: 1.5rem;
-  border-radius: 16px;
-  box-shadow: var(--shadow-md);
-}
-
 .nav-logo.logo-frame {
   padding: 0.25rem 0.55rem;
 }
@@ -197,14 +190,39 @@ a:hover {
   }
 }
 
-.hero-logo-wrap {
-  margin-bottom: 1.75rem;
+.hero-brand {
+  margin: 0 0 0.75rem;
+  font-size: clamp(3rem, 8vw, 4.5rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1;
 }
 
-.hero-logo {
+.brand-yay {
+  color: var(--orange-bright);
+}
+
+.brand-meter {
+  color: var(--navy);
+}
+
+.hero-headline {
+  margin: 0 0 1.25rem;
+  font-size: clamp(1.35rem, 3vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  color: var(--navy-deep);
+  max-width: 28rem;
+}
+
+.hero-headline .grad {
   display: block;
-  width: min(100%, 400px);
-  height: auto;
+  margin-top: 0.35rem;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .badge {
@@ -227,21 +245,6 @@ a:hover {
   height: 6px;
   border-radius: 50%;
   background: var(--teal);
-}
-
-.hero h1 {
-  margin: 0 0 1.1rem;
-  font-size: clamp(2.2rem, 4.2vw, 3.35rem);
-  font-weight: 900;
-  letter-spacing: -0.04em;
-  line-height: 1.08;
-}
-
-.hero h1 .grad {
-  background: var(--gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
 .hero-lead {
