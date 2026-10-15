@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from api_test_agent.jmeter_install import (
+    adoptium_platform,
     parse_version,
     read_local_jmeter_home,
     version_at_least,
@@ -26,6 +27,13 @@ def test_read_local_jmeter_home(tmp_path: Path):
     (tools / "jmeter-home").write_text(str(home) + "\n", encoding="utf-8")
 
     assert read_local_jmeter_home(tools) == home
+
+
+def test_adoptium_platform_linux():
+    import platform
+
+    if platform.system().lower() == "linux":
+        assert adoptium_platform()[0] == "linux"
 
 
 def test_wrapper_points_at_home(tmp_path: Path):

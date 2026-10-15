@@ -10,7 +10,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from api_test_agent.jmeter_install import local_jmeter_bin
+from api_test_agent.jmeter_install import local_jmeter_bin, runtime_env
 from api_test_agent.models import RunManifest, utc_now_iso
 
 
@@ -98,6 +98,7 @@ def run_jmeter(
         text=True,
         timeout=timeout_seconds,
         check=False,
+        env=runtime_env(),
     )
 
     manifest = RunManifest(

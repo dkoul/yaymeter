@@ -23,6 +23,8 @@ APACHE_MIRRORS: tuple[str, ...] = (
 )
 
 JMETER_HOME_FILE = "jmeter-home"
+JAVA_HOME_FILE = "java-home"
+DEFAULT_JAVA_FEATURE = "21"
 
 
 class JMeterInstallError(Exception):
@@ -47,26 +49,153 @@ def version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
     return cur >= minv
 
 
-def find_java() -> str | None:
+def adoptium_platform() -> tuple[str, str]:
+    import platform
+
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "darwin":
+        os_name = "mac"
+        arch = "aarch64" if machine in ("arm64", "aarch64") else "x64"
+    elif system == "linux":
+        os_name = "linux"
+        arch = "aarch64" if machine in ("arm64", "aarch64") else "x64"
+    elif system == "windows":
+        os_name = "windows"
+        arch = "x64"
+    else:
+        raise JMeterInstallError(f"Unsupported OS for bundled JRE: {system}")
+    return os_name, arch
+
+
+def read_local_java_home(tools_dir: Path | None = None) -> Path | None:
+    tools = tools_dir or discover_tools_dir()
+    if not tools:
+        return None
+    marker = tools / JAVA_HOME_FILE
+    if marker.is_file():
+        home = Path(marker.read_text(encoding="utf-8").strip())
+        if (home / "bin" / "java").exists():
+            return home
+    for candidate in sorted(tools.glob("jdk-*")):
+        if (candidate / "bin" / "java").exists():
+            return candidate
+    return None
+
+
+def find_java(tools_dir: Path | None = None) -> str | None:
+    """Prefer bundled JRE in .tools, then system Java on PATH."""
+    bundled = read_local_java_home(tools_dir)
+    if bundled:
+        java_bin = bundled / "bin" / "java"
+        if java_bin.exists():
+            return str(java_bin)
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = Path(java_home) / "bin" / "java"
+        if candidate.exists():
+            return str(candidate)
     return shutil.which("java")
 
 
-def require_java() -> str:
-    java = find_java()
-    if not java:
-        raise JMeterInstallError(
-            "Java runtime not found. Install a JDK or JRE 8+ and ensure `java` is on PATH."
-        )
+def java_works(java_bin: str) -> bool:
     proc = subprocess.run(
-        [java, "-version"],
+        [java_bin, "-version"],
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
     )
-    if proc.returncode != 0:
-        raise JMeterInstallError("`java -version` failed; install a working Java runtime.")
+    return proc.returncode == 0
+
+
+def require_java(tools_dir: Path | None = None) -> str:
+    java = find_java(tools_dir)
+    if not java or not java_works(java):
+        raise JMeterInstallError(
+            "Java runtime not found. Run `api-test-agent install-runtime` to download a "
+            "portable JRE into .tools/, or install Java 8+ on PATH."
+        )
     return java
+
+
+def adoptium_jre_url() -> str:
+    os_name, arch = adoptium_platform()
+    return (
+        "https://api.adoptium.net/v3/binary/latest/"
+        f"{DEFAULT_JAVA_FEATURE}/ga/{os_name}/{arch}/jre/hotspot/normal/eclipse?project=jdk"
+    )
+
+
+def install_portable_java(
+    project_root: Path | None = None,
+    force: bool = False,
+) -> Path:
+    """Download Eclipse Temurin JRE into .tools/ (no system Java required)."""
+    root = project_root or Path.cwd()
+    tools_dir = root / ".tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = read_local_java_home(tools_dir)
+    if existing and not force:
+        return existing
+
+    os_name, _arch = adoptium_platform()
+    if os_name == "windows":
+        raise JMeterInstallError(
+            "Bundled JRE auto-install is not implemented on Windows yet. "
+            "Install a JRE manually or use --executor python for functional tests."
+        )
+
+    url = adoptium_jre_url()
+    with tempfile.TemporaryDirectory() as tmp:
+        archive_path = Path(tmp) / "temurin-jre.tar.gz"
+        try:
+            with urlopen(url, timeout=300) as response:
+                archive_path.write_bytes(response.read())
+        except (URLError, TimeoutError, OSError) as exc:
+            raise JMeterInstallError(f"Could not download portable JRE: {exc}") from exc
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(path=tools_dir)
+
+    jdk_dirs = sorted(tools_dir.glob("jdk-*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not jdk_dirs:
+        raise JMeterInstallError("Portable JRE archive did not extract a jdk-* directory")
+    home = jdk_dirs[0]
+    if not (home / "bin" / "java").exists():
+        raise JMeterInstallError(f"Portable JRE missing java binary under {home}")
+
+    (tools_dir / JAVA_HOME_FILE).write_text(str(home.resolve()) + "\n", encoding="utf-8")
+    return home
+
+
+def ensure_java(project_root: Path | None = None, allow_download: bool = True) -> str:
+    root = project_root or Path.cwd()
+    tools_dir = root / ".tools"
+    java = find_java(tools_dir)
+    if java and java_works(java):
+        return java
+    if not allow_download:
+        return require_java(tools_dir)
+    install_portable_java(project_root=root)
+    return require_java(tools_dir)
+
+
+def runtime_env(project_root: Path | None = None) -> dict[str, str]:
+    """Environment variables for subprocess JMeter invocations."""
+    env = os.environ.copy()
+    root = project_root or Path.cwd()
+    tools = discover_tools_dir(root) or root / ".tools"
+    java_home = read_local_java_home(tools)
+    jmeter_home = read_local_jmeter_home(tools)
+    if java_home:
+        env["JAVA_HOME"] = str(java_home)
+        env["PATH"] = str(java_home / "bin") + os.pathsep + env.get("PATH", "")
+    if jmeter_home:
+        env["JMETER_HOME"] = str(jmeter_home)
+        env["PATH"] = str(tools / "bin") + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def discover_tools_dir(start: Path | None = None) -> Path | None:
@@ -131,26 +260,43 @@ def download_jmeter_archive(version: str, dest: Path) -> Path:
     )
 
 
-def _write_jmeter_wrapper(shim_path: Path, jmeter_home: Path) -> None:
+def _write_jmeter_wrapper(
+    shim_path: Path,
+    jmeter_home: Path,
+    java_home: Path | None = None,
+) -> None:
     shim_path.parent.mkdir(parents=True, exist_ok=True)
+    java_line = f'export JAVA_HOME="{java_home}"\n' if java_home else ""
     content = f"""#!/bin/sh
-# Generated by api-test-agent install-jmeter
-export JMETER_HOME="{jmeter_home}"
+# Generated by api-test-agent install-runtime
+{java_line}export JMETER_HOME="{jmeter_home}"
 exec "$JMETER_HOME/bin/jmeter" "$@"
 """
     shim_path.write_text(content, encoding="utf-8")
     shim_path.chmod(shim_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _write_env_snippet(tools_dir: Path, jmeter_home: Path) -> Path:
-    snippet = tools_dir / "jmeter-env.sh"
-    lines = [
-        "# Generated by api-test-agent install-jmeter",
-        f'export JMETER_HOME="{jmeter_home}"',
-        f'export PATH="{tools_dir / "bin"}:$PATH"',
-        "",
-    ]
-    snippet.write_text("\n".join(lines), encoding="utf-8")
+def _write_env_snippet(
+    tools_dir: Path,
+    jmeter_home: Path,
+    java_home: Path | None = None,
+) -> Path:
+    snippet = tools_dir / "runtime-env.sh"
+    legacy = tools_dir / "jmeter-env.sh"
+    lines = ["# Generated by api-test-agent install-runtime"]
+    if java_home:
+        lines.append(f'export JAVA_HOME="{java_home}"')
+        lines.append(f'export PATH="{java_home / "bin"}:$PATH"')
+    lines.extend(
+        [
+            f'export JMETER_HOME="{jmeter_home}"',
+            f'export PATH="{tools_dir / "bin"}:$PATH"',
+            "",
+        ]
+    )
+    text = "\n".join(lines)
+    snippet.write_text(text, encoding="utf-8")
+    legacy.write_text(text, encoding="utf-8")
     return snippet
 
 
@@ -158,6 +304,7 @@ def install_jmeter(
     version: str = DEFAULT_JMETER_VERSION,
     project_root: Path | None = None,
     force: bool = False,
+    with_java: bool = True,
 ) -> Path:
     """
     Download and extract JMeter under <project_root>/.tools and write PATH/JMETER_HOME helpers.
@@ -167,16 +314,20 @@ def install_jmeter(
     if not version_at_least(version, MIN_JMETER_VERSION):
         raise JMeterInstallError(f"JMeter version must be >= {MIN_JMETER_VERSION[0]}.{MIN_JMETER_VERSION[1]}")
 
-    require_java()
-
     root = project_root or Path.cwd()
     tools_dir = root / ".tools"
     tools_dir.mkdir(parents=True, exist_ok=True)
+
+    if with_java:
+        ensure_java(project_root=root, allow_download=True)
+    else:
+        require_java(tools_dir)
 
     existing = read_local_jmeter_home(tools_dir)
     if existing and not force:
         installed_version = jmeter_version_from_home(existing)
         if installed_version and version_at_least(installed_version, MIN_JMETER_VERSION):
+            _refresh_runtime_helpers(tools_dir, existing)
             return existing
 
     archive_name = f"apache-jmeter-{version}.tgz"
@@ -198,8 +349,7 @@ def install_jmeter(
         raise JMeterInstallError(f"JMeter binary not found at {jmeter_bin}")
 
     (tools_dir / JMETER_HOME_FILE).write_text(str(extract_dir.resolve()) + "\n", encoding="utf-8")
-    _write_jmeter_wrapper(tools_dir / "bin" / "jmeter", extract_dir.resolve())
-    _write_env_snippet(tools_dir, extract_dir.resolve())
+    _refresh_runtime_helpers(tools_dir, extract_dir.resolve())
 
     installed_version = jmeter_version_from_home(extract_dir)
     if not installed_version or not version_at_least(installed_version, MIN_JMETER_VERSION):
@@ -219,28 +369,48 @@ def jmeter_version_from_home(home: Path) -> str | None:
     return jmeter_version(str(bin_path))
 
 
+def _refresh_runtime_helpers(tools_dir: Path, jmeter_home: Path) -> None:
+    java_home = read_local_java_home(tools_dir)
+    _write_jmeter_wrapper(tools_dir / "bin" / "jmeter", jmeter_home, java_home)
+    _write_env_snippet(tools_dir, jmeter_home, java_home)
+
+
+def install_runtime(
+    version: str = DEFAULT_JMETER_VERSION,
+    project_root: Path | None = None,
+    force: bool = False,
+) -> Path:
+    """Download portable JRE (if needed) and JMeter into .tools/."""
+    return install_jmeter(
+        version=version,
+        project_root=project_root,
+        force=force,
+        with_java=True,
+    )
+
+
 def activation_instructions(project_root: Path | None = None) -> str:
     root = project_root or Path.cwd()
     tools = root / ".tools"
     home = read_local_jmeter_home(tools)
     if not home:
         return (
-            "JMeter is not installed locally. Run:\n"
-            "  api-test-agent install-jmeter\n"
-            "or:\n"
-            "  python3 .claude/skills/api-test/scripts/install_jmeter.py"
+            "JMeter runtime not installed. Functional tests need only Python (--executor python).\n"
+            "For JMeter/load: api-test-agent install-runtime"
         )
-    snippet = tools / "jmeter-env.sh"
-    return (
-        f"JMETER_HOME={home}\n"
-        f"PATH shim: {tools / 'bin' / 'jmeter'}\n"
-        f"Shell setup: source {snippet}"
-    )
+    java = read_local_java_home(tools)
+    snippet = tools / "runtime-env.sh"
+    lines = [f"JMETER_HOME={home}"]
+    if java:
+        lines.append(f"JAVA_HOME={java} (bundled)")
+    lines.append(f"Optional shell setup: source {snippet}")
+    return "\n".join(lines)
 
 
 def ensure_jmeter(
     version: str = DEFAULT_JMETER_VERSION,
     project_root: Path | None = None,
+    with_java: bool = True,
 ) -> Path:
     """Install JMeter locally if missing; return JMETER_HOME."""
     root = project_root or Path.cwd()
@@ -249,5 +419,7 @@ def ensure_jmeter(
     if home:
         ver = jmeter_version_from_home(home)
         if ver and version_at_least(ver, MIN_JMETER_VERSION):
+            _refresh_runtime_helpers(tools, home)
             return home
-    return install_jmeter(version=version, project_root=root)
+    return install_jmeter(version=version, project_root=root, with_java=with_java)
+

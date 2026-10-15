@@ -1,7 +1,7 @@
 .PHONY: install test lint inspect example jmeter
 
-jmeter:
-	api-test-agent install-jmeter
+runtime:
+	api-test-agent install-runtime
 
 install:
 	pip install -e ".[dev]"

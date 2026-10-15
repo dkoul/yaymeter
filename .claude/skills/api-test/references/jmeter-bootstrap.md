@@ -1,16 +1,18 @@
-# JMeter bootstrap
+# Runtime bootstrap (optional)
 
-From the repository root:
+**Users should not need this for normal functional API tests.** The default `run` executor is Python (no JVM).
+
+When JMeter is required (explicit `--executor jmeter` or `performance` profile), the CLI can **auto-install** into `.tools/`:
+
+- Eclipse Temurin JRE 21 (portable, no system Java)
+- Apache JMeter 5.6.3
+
+Manual prefetch (optional):
 
 ```bash
-api-test-agent install-jmeter
-source .tools/jmeter-env.sh
-api-test-agent check-environment
+api-test-agent install-runtime
 ```
 
-- Installs Apache JMeter 5.6.3 under `.tools/apache-jmeter-5.6.3/` (gitignored).
-- Writes `.tools/jmeter-home`, `.tools/bin/jmeter` (PATH shim), and `.tools/jmeter-env.sh`.
-- Requires Java on `PATH`. Override version with `install-jmeter --version 5.6.3`.
-- `find_jmeter()` also honors `JMETER_HOME` and `API_TEST_JMETER_HOME`.
+Helpers: `.tools/runtime-env.sh` (and legacy `.tools/jmeter-env.sh`). Subprocess runs set `JAVA_HOME` / `JMETER_HOME` automatically when `.tools/` is present.
 
-Skill script: `.claude/skills/api-test/scripts/install_jmeter.py`
+Skill script: `install_runtime.py`

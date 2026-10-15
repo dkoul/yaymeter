@@ -18,6 +18,8 @@ from api_test_agent.jmeter_install import (
     ensure_jmeter,
     find_java,
     install_jmeter,
+    install_runtime,
+    read_local_java_home,
 )
 from api_test_agent.jmeter_runner import (
     JMeterNotFoundError,
@@ -45,48 +47,51 @@ def main() -> None:
 @click.option(
     "--install",
     is_flag=True,
-    help="Download Apache JMeter 5.6+ into .tools/ if missing",
+    help="Download portable JRE + JMeter into .tools/ if missing",
 )
 @click.option("--jmeter-version", "release_version", default="5.6.3", show_default=True)
 @click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
 def check_environment(install: bool, release_version: str, project_root: Path) -> None:
-    """Print Python, Java, and JMeter availability."""
+    """Print readiness for functional (Python) and optional JMeter runs."""
     click.echo(f"Python: {sys.version.split()[0]}")
-    java = find_java()
-    if java:
-        click.echo(f"Java: {java}")
-    else:
-        click.echo("Java: not found (required for JMeter)")
+    click.echo("Functional tests: ready (default executor is python; no JVM required)")
 
     if install:
         try:
-            home = ensure_jmeter(version=release_version, project_root=project_root)
-            click.echo(f"JMeter installed at: {home}")
+            home = install_runtime(version=release_version, project_root=project_root)
+            click.echo(f"JMeter runtime installed at: {home}")
         except Exception as exc:
-            click.echo(f"JMeter install failed: {exc}", err=True)
+            click.echo(f"Runtime install failed: {exc}", err=True)
             raise SystemExit(1) from exc
+
+    bundled_java = read_local_java_home(project_root / ".tools")
+    java = find_java(project_root / ".tools")
+    if java:
+        label = "bundled" if bundled_java else "system"
+        click.echo(f"Java ({label}): {java}")
+    else:
+        click.echo("Java: not installed (only needed for JMeter / performance runs)")
 
     jm = find_jmeter()
     if jm:
         click.echo(f"JMeter: {jm} (version {query_jmeter_version(jm)})")
         click.echo(activation_instructions(project_root))
     else:
-        click.echo("JMeter: not found")
-        click.echo("Install with: api-test-agent install-jmeter")
-        click.echo("Or use --executor python for local runs without JMeter")
+        click.echo("JMeter: not installed (optional; auto-installed when you run with --executor jmeter)")
 
 
-@main.command("install-jmeter")
-@click.option("--version", "release_version", default="5.6.3", show_default=True)
-@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
-@click.option("--force", is_flag=True, help="Re-download even if .tools install exists")
-def install_jmeter_cmd(release_version: str, project_root: Path, force: bool) -> None:
-    """Fetch Apache JMeter into .tools/ and add a PATH shim plus JMETER_HOME helper."""
+def _install_runtime_cmd(
+    release_version: str,
+    project_root: Path,
+    force: bool,
+    with_java: bool,
+) -> None:
     try:
         home = install_jmeter(
             version=release_version,
             project_root=project_root,
             force=force,
+            with_java=with_java,
         )
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
@@ -96,6 +101,34 @@ def install_jmeter_cmd(release_version: str, project_root: Path, force: bool) ->
     click.echo(activation_instructions(project_root))
     ver = query_jmeter_version(str(home / "bin" / "jmeter"))
     click.echo(f"Verified JMeter version: {ver}")
+
+
+@main.command("install-runtime")
+@click.option("--version", "release_version", default="5.6.3", show_default=True)
+@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
+@click.option("--force", is_flag=True, help="Re-download even if .tools install exists")
+def install_runtime_cmd(release_version: str, project_root: Path, force: bool) -> None:
+    """Download portable JRE (if needed) and Apache JMeter into .tools/."""
+    _install_runtime_cmd(release_version, project_root, force, with_java=True)
+
+
+@main.command("install-jmeter")
+@click.option("--version", "release_version", default="5.6.3", show_default=True)
+@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
+@click.option("--force", is_flag=True, help="Re-download even if .tools install exists")
+@click.option(
+    "--with-java/--no-with-java",
+    default=True,
+    help="Download portable JRE when system Java is missing (default: yes)",
+)
+def install_jmeter_cmd(
+    release_version: str,
+    project_root: Path,
+    force: bool,
+    with_java: bool,
+) -> None:
+    """Fetch JMeter into .tools/ (alias of install-runtime when --with-java)."""
+    _install_runtime_cmd(release_version, project_root, force, with_java)
 
 
 @main.command("inspect")
@@ -152,8 +185,8 @@ def validate_plan_cmd(plan: Path) -> None:
 @click.option(
     "--executor",
     type=click.Choice(["jmeter", "python"]),
-    default="jmeter",
-    help="jmeter (default) or python (no JMeter required)",
+    default="python",
+    help="python (default, no JVM) or jmeter (auto-installs runtime in .tools/ if missing)",
 )
 @click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
 @click.option("--run-id", default=None, help="Optional run id")
@@ -170,6 +203,13 @@ def run_cmd(
     cfg = load_config(config)
     model = TestPlan.model_validate(json.loads(plan.read_text(encoding="utf-8")))
     validate_plan_for_run(model, cfg, profile, approve)
+
+    if profile == "performance" and executor == "python":
+        click.echo(
+            "Performance profile uses JMeter for load metrics; switching to jmeter executor.",
+            err=True,
+        )
+        executor = "jmeter"
 
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
     gen_dir = Path("generated-tests") / run_id
@@ -201,6 +241,16 @@ def run_cmd(
         results = execute_plan(model, cfg, out_run, run_id, cfg.target_label)
         manifest.artifacts["results_json"] = str(out_run / "results.json")
     else:
+        if not find_jmeter():
+            click.echo(
+                "Setting up portable Java + JMeter in .tools/ (one-time download)...",
+                err=True,
+            )
+            try:
+                ensure_jmeter(project_root=Path.cwd(), with_java=True)
+            except Exception as exc:
+                click.echo(f"Runtime setup failed: {exc}", err=True)
+                raise SystemExit(2) from exc
         try:
             jtl, log, jm_manifest = run_jmeter(
                 jmx_path,
