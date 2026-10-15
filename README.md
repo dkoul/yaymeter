@@ -1,5 +1,7 @@
 # Yaymeter
 
+**[Project site](https://dkoul.github.io/yaymeter/)** — overview for testers and quick visual tour.
+
 Turn an **OpenAPI spec** into a **JMeter test plan** (`.jmx`), run it locally or in **CI**, and get a Markdown report. Works with **Claude Code** via the skill in [`.claude/skills/yaymeter/SKILL.md`](.claude/skills/yaymeter/SKILL.md).
 
 You need **Python 3.11+** only. Yaymeter downloads Java + JMeter into `.tools/` automatically when you first run tests.
