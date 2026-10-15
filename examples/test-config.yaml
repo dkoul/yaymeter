@@ -1,0 +1,10 @@
+base_url: http://127.0.0.1:8765
+target_label: bookstore-local
+allowed_hosts:
+  - 127.0.0.1
+seed: 42
+generator_version: 0.1.0
+allow_mutations: true
+disposable_test_environment: true
+auth:
+  type: none
