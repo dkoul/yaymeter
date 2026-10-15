@@ -1,7 +1,4 @@
-.PHONY: install test lint inspect example jmeter
-
-runtime:
-	api-test-agent install-runtime
+.PHONY: install test lint inspect example runtime
 
 install:
 	pip install -e ".[dev]"
@@ -15,9 +12,12 @@ test-all:
 lint:
 	ruff check src tests
 
+runtime:
+	yaymeter install-runtime
+
 inspect:
-	api-test-agent inspect --spec tests/fixtures/bookstore-openapi.yaml
+	yaymeter inspect --spec tests/fixtures/bookstore-openapi.yaml
 
 example:
-	api-test-agent plan --spec tests/fixtures/bookstore-openapi.yaml --config examples/test-config.yaml --out generated-tests/plan.json
-	api-test-agent validate-plan --plan generated-tests/plan.json
+	yaymeter plan --spec tests/fixtures/bookstore-openapi.yaml --config examples/test-config.yaml --out generated-tests/plan.json
+	yaymeter validate-plan --plan generated-tests/plan.json

@@ -102,5 +102,5 @@ def test_end_to_end_python_executor(mock_server, tmp_path):
     )
     assert result.exit_code == 0
     text = report_out.read_text()
-    assert "# API Test Report" in text
+    assert "# Yaymeter API Test Report" in text
     assert "Coverage" in text

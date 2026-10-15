@@ -8,3 +8,12 @@ allow_mutations: true
 disposable_test_environment: true
 auth:
   type: none
+  env_var: API_TEST_AUTH_TOKEN
+
+# Load testing (enable allow_performance before multi-user runs)
+allow_performance: false
+performance:
+  threads: 10
+  ramp_up_seconds: 30
+  loops: 20
+  duration_seconds: 60

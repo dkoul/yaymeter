@@ -27,20 +27,20 @@ from api_test_agent.jmeter_runner import (
     jmeter_version as query_jmeter_version,
     run_jmeter,
 )
-from api_test_agent.jmx_builder import write_jmx
+from api_test_agent.jmx_builder import jmeter_load_properties, write_jmx
 from api_test_agent.models import RunManifest, TestPlan, utc_now_iso
 from api_test_agent.openapi_loader import load_inventory
 from api_test_agent.python_executor import execute_plan
 from api_test_agent.report import render_report, write_report
 from api_test_agent.result_parser import parse_jtl
-from api_test_agent.safety import validate_plan_for_run
+from api_test_agent.safety import validate_plan_for_run, validate_target_url
 from api_test_agent.test_design import generate_plan, plan_to_json, validate_plan
 
 
 @click.group()
-@click.version_option(__version__, prog_name="api-test-agent")
+@click.version_option(__version__, prog_name="yaymeter")
 def main() -> None:
-    """OpenAPI-driven API testing with JMeter or Python executor."""
+    """Yaymeter — OpenAPI-driven API testing with JMeter (default) or Python."""
 
 
 @main.command("check-environment")
@@ -54,7 +54,7 @@ def main() -> None:
 def check_environment(install: bool, release_version: str, project_root: Path) -> None:
     """Print readiness for functional (Python) and optional JMeter runs."""
     click.echo(f"Python: {sys.version.split()[0]}")
-    click.echo("Functional tests: ready (default executor is python; no JVM required)")
+    click.echo("Functional tests: use JMeter by default (runtime auto-installs to .tools/ if missing)")
 
     if install:
         try:
@@ -77,7 +77,7 @@ def check_environment(install: bool, release_version: str, project_root: Path) -
         click.echo(f"JMeter: {jm} (version {query_jmeter_version(jm)})")
         click.echo(activation_instructions(project_root))
     else:
-        click.echo("JMeter: not installed (optional; auto-installed when you run with --executor jmeter)")
+        click.echo("JMeter: not installed yet (auto-installed on first `run`; or: install-runtime)")
 
 
 def _install_runtime_cmd(
@@ -159,6 +159,82 @@ def plan_cmd(spec: Path, config: Path, out: Path) -> None:
     click.echo(f"Wrote {len(plan.test_cases)} test cases to {out}")
 
 
+@main.command("export-jmx")
+@click.option("--plan", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--out",
+    type=click.Path(path_type=Path),
+    default=Path("generated-tests/plan.jmx"),
+    show_default=True,
+    help="Stable JMX path to commit and reuse in CI",
+)
+def export_jmx_cmd(plan: Path, out: Path) -> None:
+    """Write a parametric JMeter plan (one file for functional and load runs)."""
+    model = TestPlan.model_validate(json.loads(plan.read_text(encoding="utf-8")))
+    write_jmx(model, out, profile="functional", parametric=True)
+    click.echo(f"Wrote {out}")
+    click.echo(
+        "Functional: yaymeter run-jmx --jmx "
+        f"{out} --threads 1 --loops 1\n"
+        f"Load:       yaymeter run-jmx --jmx {out} --threads 10 --ramp-seconds 30 --loops 20 --approve"
+    )
+
+
+@main.command("run-jmx")
+@click.option("--jmx", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--config", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--threads", type=int, default=1, show_default=True)
+@click.option("--ramp-seconds", type=int, default=1, show_default=True)
+@click.option("--loops", type=int, default=1, show_default=True)
+@click.option("--approve", is_flag=True, help="Required when threads > 1 or loops > 1")
+@click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
+@click.option("--run-id", default=None)
+def run_jmx_cmd(
+    jmx: Path,
+    config: Path,
+    threads: int,
+    ramp_seconds: int,
+    loops: int,
+    approve: bool,
+    run_dir: Path,
+    run_id: str | None,
+) -> None:
+    """Run an existing .jmx (same file as CI) with virtual-user settings."""
+    cfg = load_config(config)
+    validate_target_url(str(cfg.base_url), cfg)
+
+    is_load = threads > 1 or loops > 1 or ramp_seconds > 1
+    if is_load:
+        if not approve:
+            raise click.ClickException("Load-style runs require --approve")
+        if not cfg.allow_performance and threads > 1:
+            raise click.ClickException("Set allow_performance: true in config for multi-user runs")
+
+    if not find_jmeter():
+        click.echo("Setting up portable Java + JMeter in .tools/ (one-time download)...", err=True)
+        ensure_jmeter(project_root=Path.cwd(), with_java=True)
+
+    props = {
+        "yaymeter.threads": threads,
+        "yaymeter.ramp_seconds": ramp_seconds,
+        "yaymeter.loops": loops,
+    }
+    run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
+    jtl_parent = Path(run_dir)
+    jtl, _log, manifest = run_jmeter(
+        jmx,
+        jtl_parent,
+        run_id=run_id,
+        timeout_seconds=cfg.safety.run_timeout_seconds,
+        jmeter_properties=props,
+    )
+    click.echo(f"JTL: {jtl}")
+    click.echo(f"JMeter exit logged in {manifest.artifacts.get('jmeter_log')}")
+    exit_code_path = jtl.parent / "jmeter_exit_code.txt"
+    if exit_code_path.exists() and exit_code_path.read_text().strip() != "0":
+        raise SystemExit(int(exit_code_path.read_text().strip() or "1"))
+
+
 @main.command("validate-plan")
 @click.option("--plan", required=True, type=click.Path(exists=True, path_type=Path))
 def validate_plan_cmd(plan: Path) -> None:
@@ -185,8 +261,8 @@ def validate_plan_cmd(plan: Path) -> None:
 @click.option(
     "--executor",
     type=click.Choice(["jmeter", "python"]),
-    default="python",
-    help="python (default, no JVM) or jmeter (auto-installs runtime in .tools/ if missing)",
+    default="jmeter",
+    help="jmeter (default; auto-installs portable JRE+JMeter in .tools/) or python",
 )
 @click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
 @click.option("--run-id", default=None, help="Optional run id")
@@ -215,7 +291,10 @@ def run_cmd(
     gen_dir = Path("generated-tests") / run_id
     gen_dir.mkdir(parents=True, exist_ok=True)
     jmx_path = gen_dir / "plan.jmx"
-    write_jmx(model, jmx_path, profile=profile)
+    write_jmx(model, jmx_path, profile=profile, parametric=True)
+    stable_jmx = Path("generated-tests/plan.jmx")
+    if stable_jmx.resolve() != jmx_path.resolve():
+        write_jmx(model, stable_jmx, profile=profile, parametric=True)
 
     out_run = Path(run_dir) / run_id
     out_run.mkdir(parents=True, exist_ok=True)
@@ -252,11 +331,18 @@ def run_cmd(
                 click.echo(f"Runtime setup failed: {exc}", err=True)
                 raise SystemExit(2) from exc
         try:
+            jprops = jmeter_load_properties(
+                profile,
+                threads=cfg.performance.threads,
+                ramp_seconds=cfg.performance.ramp_up_seconds,
+                loops=cfg.performance.loops,
+            )
             jtl, log, jm_manifest = run_jmeter(
                 jmx_path,
                 Path(run_dir),
                 run_id=run_id,
                 timeout_seconds=cfg.safety.run_timeout_seconds,
+                jmeter_properties=jprops,
             )
             manifest.artifacts.update(jm_manifest.artifacts)
             manifest.jmeter_version = jm_manifest.jmeter_version

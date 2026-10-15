@@ -30,9 +30,10 @@ class SafetyLimits(BaseModel):
 
 class PerformanceProfile(BaseModel):
     enabled: bool = False
-    threads: int = 5
-    ramp_up_seconds: int = 10
-    duration_seconds: int = 30
+    threads: int = 10
+    ramp_up_seconds: int = 30
+    duration_seconds: int = 60
+    loops: int = 20
     target_operations: list[str] = Field(default_factory=list)
 
 
