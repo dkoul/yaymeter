@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Yaymeter turns OpenAPI into JMeter tests — smoke, contract, and load from one plan. Built for QA teams who need proof, not guesswork."
+      content="Yaymeter is JMeter's happy cousin — generate tests from OpenAPI or MCP, run real load with JMeter under the hood, and get reports humans actually understand."
     />
-    <meta property="og:title" content="Yaymeter — OpenAPI to JMeter for testers" />
+    <meta property="og:title" content="Yaymeter — JMeter's happy cousin" />
     <meta
       property="og:description"
-      content="Your API has a contract. Yaymeter proves it holds up — functional runs, load tests, and coverage reports from one JMX."
+      content="All the power of Apache JMeter. None of the 1980s UI trauma. Markdown reports you don't need a statistics PhD to read."
     />
     <meta property="og:image" content="https://dkoul.github.io/yaymeter/assets/yaymeter-logo.png" />
     <link rel="icon" href="assets/yaymeter-logo.png" type="image/png" />
-    <title>Yaymeter — OpenAPI to JMeter for testers</title>
+    <title>Yaymeter — JMeter's happy cousin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -26,13 +26,13 @@
   <body>
     <header class="nav">
       <div class="nav-inner">
-        <a class="nav-logo" href="#top" aria-label="Yaymeter home">
-          <img src="assets/yaymeter-logo.png" alt="Yaymeter" width="220" height="80" />
+        <a class="nav-logo logo-frame" href="#top" aria-label="Yaymeter home">
+          <img src="assets/yaymeter-logo.png" alt="Yaymeter" width="200" height="74" />
         </a>
         <nav class="nav-links" aria-label="Primary">
-          <a href="#gap">The gap</a>
-          <a href="#layers">Test layers</a>
-          <a href="#ship">Ship to CI</a>
+          <a href="#jmeter">Why not raw JMeter?</a>
+          <a href="#features">Features</a>
+          <a href="#mcp">MCP</a>
           <a href="https://github.com/dkoul/yaymeter/blob/main/README.md">Docs</a>
         </nav>
         <a class="btn btn-primary" href="https://github.com/dkoul/yaymeter#1-install">Get started</a>
@@ -41,27 +41,28 @@
 
     <section class="hero" id="top">
       <div class="hero-bg" aria-hidden="true"></div>
-      <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <div class="hero-logo-wrap">
+          <div class="logo-frame hero-logo-frame">
             <img
               class="hero-logo"
               src="assets/yaymeter-logo.png"
-              alt="Yaymeter — API testing from OpenAPI to JMeter"
-              width="420"
-              height="154"
+              alt="Yaymeter"
+              width="400"
+              height="146"
             />
           </div>
-          <div class="badge"><span class="badge-dot"></span>OpenAPI → JMeter → evidence</div>
+          <div class="badge"><span class="badge-dot"></span>JMeter's happy cousin</div>
           <h1>
-            Your API has a contract.<br />
-            <span class="grad">Can you prove it under load?</span>
+            Apache JMeter is a beast.<br />
+            <span class="grad">Yaymeter makes it bearable.</span>
           </h1>
           <p class="hero-lead">
-            Yaymeter generates deterministic API tests from OpenAPI, exports one CI-ready JMX, and
-            reports what actually ran — with coverage gaps your team can act on. Python in; JMeter
-            boots itself.
+            JMeter is genuinely powerful for API load and soak testing — but building tests in that UI
+            feels like a time machine to the 1980s, and the default reports assume you're a statistician.
+            Yaymeter generates plans from <strong>OpenAPI</strong> or <strong>MCP</strong>, exports
+            CI-ready JMX, bootstraps Java for you, and hands you <strong>Markdown reports</strong> your
+            whole team can read.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="https://github.com/dkoul/yaymeter#1-install">Get started →</a>
@@ -70,7 +71,7 @@
               href="https://github.com/dkoul/yaymeter"
               target="_blank"
               rel="noopener noreferrer"
-              >View on GitHub</a
+              >GitHub</a
             >
           </div>
         </div>
@@ -80,24 +81,18 @@
             <div class="term-dots">
               <span class="r"></span><span class="y"></span><span class="g"></span>
             </div>
-            <span class="title">yaymeter run-jmx</span>
+            <span class="title">yaymeter run — happy path</span>
           </div>
-          <div class="terminal-body"><span class="t-prompt">$ </span><span class="t-cmd">yaymeter run-jmx</span> <span class="t-dim">--jmx generated-tests/plan.jmx --threads 1 --loops 1 --approve</span>
+          <div class="terminal-body"><span class="t-prompt">$ </span><span class="t-cmd">yaymeter plan</span> <span class="t-dim">--spec openapi.yaml --config my-api.yaml</span>
+<span class="t-prompt">$ </span><span class="t-cmd">yaymeter run</span> <span class="t-dim">--plan generated-tests/plan.json --executor jmeter --approve</span>
 
-<span class="t-dim">  Bootstrapping JRE + JMeter in .tools/ ...</span> <span class="t-ok">done</span>
-<span class="t-dim">  Target:</span> <span class="t-path">https://api.staging.example.com</span> <span class="t-dim">(allowed_hosts ✓)</span>
+<span class="t-dim">  JMeter installed to .tools/</span> <span class="t-ok">✓</span> <span class="t-dim">(you didn't click a single tree node)</span>
 
-<span class="t-dim">  Running </span><span class="t-num">47</span><span class="t-dim"> samplers ...</span>
+<span class="t-ok">  ✓ PASS </span><span class="t-accent">GET /books</span> <span class="t-dim">200</span>
+<span class="t-crit">  ✗ FAIL </span><span class="t-accent">GET /books/{id}</span> <span class="t-dim">404 — see report, not a JTL spreadsheet</span>
 
-<span class="t-ok">  ✓ PASS </span><span class="t-accent">GET /books</span> <span class="t-dim">200 · schema OK</span>
-<span class="t-ok">  ✓ PASS </span><span class="t-accent">POST /books</span> <span class="t-dim">201 · mutation (approved)</span>
-<span class="t-crit">  ✗ FAIL </span><span class="t-accent">GET /books/{id}</span> <span class="t-dim">404 on seed id=42</span>
-<span class="t-warn">  ○ SKIP </span><span class="t-accent">DELETE /books/{id}</span> <span class="t-dim">requires --approve</span>
-
-<span class="t-dim">  ─────────────────────────────────────────</span>
-  Coverage   <span class="t-num">12/14</span> operations exercised
-  Outcomes   <span class="t-ok">PASS 38</span>  <span class="t-crit">FAIL 2</span>  <span class="t-warn">SKIP 7</span>
-<span class="t-dim">  Report →</span> <span class="t-path">reports/run-2026-10-15.md</span></div>
+<span class="t-dim">  Report →</span> <span class="t-path">reports/run-2026-10-15.md</span>
+<span class="t-dim">  Coverage gaps listed in plain English. Needle: green zone.</span></div>
         </div>
       </div>
     </section>
@@ -105,131 +100,125 @@
     <div class="stats">
       <div class="stats-grid">
         <div class="stat"><strong>1</strong><span>JMX for smoke &amp; load</span></div>
-        <div class="stat"><strong>7</strong><span>test layers from OpenAPI</span></div>
+        <div class="stat"><strong>2</strong><span>sources: OpenAPI + MCP</span></div>
         <div class="stat"><strong>0</strong><span>manual Java installs</span></div>
-        <div class="stat"><strong>CI</strong><span>commit plan.jmx &amp; gate</span></div>
+        <div class="stat"><strong>📄</strong><span>Markdown reports</span></div>
       </div>
     </div>
 
-    <section id="gap">
+    <section id="jmeter" class="section-alt">
       <div class="section-inner">
-        <p class="label">The gap in your pipeline</p>
-        <h2>Every quality dimension covered — except API proof from the spec</h2>
+        <p class="label">The JMeter paradox</p>
+        <h2>World-class engine. Museum-grade UX.</h2>
         <p class="section-lead">
-          Teams lint code, scan dependencies, and run E2E in the browser. The OpenAPI file describes
-          the truth — but rarely drives repeatable functional and performance checks. Yaymeter closes
-          that loop.
+          We're not here to bash JMeter — teams run serious load with it every day. We're here to
+          admit the truth: authoring tests in the desktop UI is painful, and out-of-the-box results
+          read like homework for a stats class. Yaymeter keeps JMeter as the execution engine and
+          removes the misery around it.
         </p>
-        <div class="gap-grid">
-          <div class="gap-cell">
-            <div class="icon">📐</div>
-            <h3>Unit tests</h3>
-            <p>pytest / JUnit</p>
-          </div>
-          <div class="gap-cell">
-            <div class="icon">🔐</div>
-            <h3>Security</h3>
-            <p>SAST / DAST</p>
-          </div>
-          <div class="gap-cell">
-            <div class="icon">🌐</div>
-            <h3>E2E UI</h3>
-            <p>Playwright / Cypress</p>
-          </div>
-          <div class="gap-cell">
-            <div class="icon">📦</div>
-            <h3>Contract mocks</h3>
-            <p>Pact / Prism</p>
-          </div>
-          <div class="gap-cell">
-            <div class="icon">⚡</div>
-            <h3>Frontend perf</h3>
-            <p>Lighthouse</p>
-          </div>
-          <div class="gap-cell highlight">
-            <div class="icon">📈</div>
-            <h3>API coverage</h3>
-            <p><strong>Yaymeter</strong></p>
-          </div>
+        <div class="contrast">
+          <article class="contrast-card contrast-sad">
+            <h3>Raw JMeter</h3>
+            <ul>
+              <li>Click through nested trees to build HTTP samplers by hand</li>
+              <li>XML plans that are easy to break and hard to review in PRs</li>
+              <li>JTL files and aggregate graphs — powerful, but cryptic</li>
+              <li>"What failed?" often needs a JMeter guru in the room</li>
+            </ul>
+          </article>
+          <article class="contrast-card contrast-happy">
+            <h3>Yaymeter</h3>
+            <ul>
+              <li>Point at <code>openapi.yaml</code> or an MCP server — get a deterministic plan</li>
+              <li>One parametric <code>plan.jmx</code> you can commit and reuse in CI</li>
+              <li>Markdown report: PASS / FAIL / gaps, per operation, no p-values required</li>
+              <li>Safety knobs: host allowlists, <code>--approve</code> for mutations &amp; load</li>
+            </ul>
+          </article>
+        </div>
+        <p class="tagline-callout">
+          <strong>JMeter's cousin, not a replacement.</strong> When you need the hammer, Yaymeter
+          still swings it — you just don't have to forge the handle yourself.
+        </p>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="section-inner">
+        <p class="label">What you get today</p>
+        <h2>From spec to evidence — without the suffering</h2>
+        <div class="layers">
+          <article class="layer-card">
+            <h3>OpenAPI → tests</h3>
+            <p>
+              Positive, negative, boundary, and security-basic cases from your contract. Review
+              <code>plan.json</code>, export JMX, gate in CI.
+            </p>
+          </article>
+          <article class="layer-card teal">
+            <h3>Real JMeter runs</h3>
+            <p>
+              Portable JRE + JMeter land in <code>.tools/</code>. Same JMX for smoke (1 thread) and
+              load (N threads) — flip properties, not rebuild plans.
+            </p>
+          </article>
+          <article class="layer-card">
+            <h3>Reports for humans</h3>
+            <p>
+              Coverage vs discovered operations, untested endpoints with reasons, load aggregates
+              when you crank threads — not a wall of percentiles unless you want the JTL.
+            </p>
+          </article>
+          <article class="layer-card teal">
+            <h3>Safety by default</h3>
+            <p>
+              Enforced limits on requests, concurrency, ramp, and error rate. TLS-verified runtime
+              downloads. Tokens via env — never baked into the JMX.
+            </p>
+          </article>
         </div>
       </div>
     </section>
 
-    <section id="layers">
+    <section id="mcp" class="section-alt">
       <div class="section-inner">
-        <p class="label">What gets generated</p>
-        <h2>Layered tests grounded in your OpenAPI — not vibes</h2>
+        <p class="label">New: MCP</p>
+        <h2>Model Context Protocol servers, same happy path</h2>
         <p class="section-lead">
-          Each case cites the spec, project policy, or an explicit hypothesis. You review
-          <code>plan.json</code> before anything hits the wire; reports show gaps with reasons, not
-          hand-wavy “AI said OK.”
+          MCP tools ship with JSON Schema inputs — just like OpenAPI operations. Yaymeter inventories
+          <code>tools/list</code>, plans tool calls and protocol checks, and runs them with the
+          official MCP SDK. JMeter stays for HTTP load; MCP functional runs use
+          <code>--executor mcp</code>.
         </p>
-        <div class="layers">
-          <article class="layer-card">
-            <div class="layer-pct">Foundation</div>
-            <h3>Contract inventory</h3>
-            <p>Every operation discovered, parameterized, and mapped to assertions.</p>
-            <div class="tags"><code>openapi</code><code>inventory</code></div>
-          </article>
-          <article class="layer-card teal">
-            <div class="layer-pct">Happy path</div>
-            <h3>Positive &amp; workflows</h3>
-            <p>Seed-stable payloads and simple multi-step flows where the spec allows.</p>
-            <div class="tags"><code>positive</code><code>workflow</code></div>
-          </article>
-          <article class="layer-card">
-            <div class="layer-pct">Resilience</div>
-            <h3>Negative &amp; boundary</h3>
-            <p>Invalid types, missing fields, and edge values — labeled when hypothetical.</p>
-            <div class="tags"><code>negative</code><code>boundary</code></div>
-          </article>
-          <article class="layer-card teal">
-            <div class="layer-pct">Shape</div>
-            <h3>Response schema</h3>
-            <p>Status codes and response bodies checked against declared schemas.</p>
-            <div class="tags"><code>json-schema</code><code>assertions</code></div>
-          </article>
-          <article class="layer-card">
-            <div class="layer-pct">Guardrails</div>
-            <h3>Safety policy</h3>
-            <p>Host allowlists, mutation gates, and load approval before prod-adjacent runs.</p>
-            <div class="tags"><code>allowed_hosts</code><code>--approve</code></div>
-          </article>
-          <article class="layer-card teal">
-            <div class="layer-pct">Scale</div>
-            <h3>Performance profile</h3>
-            <p>Same JMX — crank threads, ramp, and loops when you explicitly opt in.</p>
-            <div class="tags"><code>jmeter</code><code>load</code></div>
-          </article>
+        <div class="code-panel inline-code">
+          <div class="label-bar">MCP quick start</div>
+          <pre>pip install -e ".[mcp]"
+yaymeter inspect --mcp-url https://your-server/mcp --out mcp-inventory.json
+yaymeter plan --inventory mcp-inventory.json --config my-api.yaml --out plan.json
+yaymeter run --plan plan.json --config my-api.yaml --executor mcp --approve</pre>
         </div>
       </div>
     </section>
 
     <section id="ship">
       <div class="section-inner">
-        <p class="label">Ship to CI</p>
-        <h2>From clone to gated pipeline in minutes</h2>
-        <p class="section-lead">No bespoke glue per endpoint. Export once, run everywhere JMeter runs.</p>
+        <p class="label">Ship it</p>
+        <h2>Three commands to CI</h2>
         <div class="steps">
           <div class="step">
             <span class="step-num">01</span>
             <h3>Install</h3>
-            <p>Python 3.11+. Yaymeter pulls portable JRE + JMeter on first run.</p>
             <pre>pip install -e ".[dev]"</pre>
           </div>
           <div class="step">
             <span class="step-num">02</span>
             <h3>Plan &amp; export</h3>
-            <p>Point at your spec and config. Commit the JMX like any other test asset.</p>
-            <pre>yaymeter plan --spec openapi.yaml \
-  --config my-api.yaml --out generated-tests/plan.json
-yaymeter export-jmx --plan generated-tests/plan.json \
-  --out generated-tests/plan.jmx</pre>
+            <pre>yaymeter plan --spec openapi.yaml --config my-api.yaml
+yaymeter export-jmx --plan generated-tests/plan.json --config my-api.yaml</pre>
           </div>
           <div class="step">
             <span class="step-num">03</span>
-            <h3>Enforce</h3>
-            <p>Smoke on every PR; load on a schedule. Fail on JMeter exit code or coverage floor.</p>
+            <h3>Run in CI</h3>
             <pre>yaymeter run-jmx --jmx generated-tests/plan.jmx \
   --threads 1 --loops 1 --approve</pre>
           </div>
@@ -237,76 +226,19 @@ yaymeter export-jmx --plan generated-tests/plan.json \
       </div>
     </section>
 
-    <section id="report">
-      <div class="section-inner">
-        <p class="label">Evidence testers trust</p>
-        <h2>Reports and CI that speak QA language</h2>
-        <p class="section-lead">
-          PASS / FAIL / SKIP with paths to operations — plus untested endpoints and why. Metrics come
-          from JTL and <code>results.json</code>, not LLM summaries.
-        </p>
-        <div class="split">
-          <div class="report-card">
-            <div class="report-head">
-              <div>
-                <strong>API coverage</strong>
-                <div style="font-size: 0.8rem; color: var(--muted)">staging · bookstore API</div>
-              </div>
-              <div class="score-ring">86%<small>operations hit</small></div>
-            </div>
-            <div class="report-body">
-              <div class="report-row">
-                <span class="sev sev-pass">PASS</span> GET /books — 200, schema valid
-              </div>
-              <div class="report-row">
-                <span class="sev sev-fail">FAIL</span> GET /books/{id} — expected 200, got 404
-              </div>
-              <div class="report-row">
-                <span class="sev sev-skip">GAP</span> PATCH /books/{id} — not in current plan
-              </div>
-            </div>
-          </div>
-          <div class="code-panel">
-            <div class="label-bar">.github/workflows/api-smoke.yml</div>
-            <pre>name: API smoke
-on: [pull_request]
-jobs:
-  yaymeter:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - run: pip install -e .
-      - run: |
-          yaymeter run-jmx \
-            --jmx generated-tests/plan.jmx \
-            --config my-api.yaml \
-            --threads 1 --loops 1 --approve \
-            --run-id ci-${{ github.run_id }}
-        env:
-          API_TEST_AUTH_TOKEN: ${{ secrets.API_TEST_TOKEN }}</pre>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section class="cta">
       <div class="cta-bg" aria-hidden="true"></div>
-      <img
-        class="cta-logo"
-        src="assets/yaymeter-logo.png"
-        alt="Yaymeter"
-        width="320"
-        height="117"
-      />
-      <h2>Measure APIs the way you measure everything else</h2>
+      <div class="logo-frame cta-logo-frame">
+        <img class="cta-logo" src="assets/yaymeter-logo.png" alt="Yaymeter" width="280" height="102" />
+      </div>
+      <h2>Keep JMeter. Lose the frown.</h2>
       <p>
-        Give your testers a spec-driven path from smoke to load — with guardrails, artifacts, and
-        reports that hold up in release reviews.
+        Yaymeter is the friendly layer on top — spec-driven tests, automatic setup, and reports that
+        make your standup shorter. MIT licensed. Built for testers who like their APIs fast and their
+        tools sane.
       </p>
       <div class="install-line">
-        <span class="prefix">$</span> pip install -e ".[dev]" &amp;& yaymeter check-environment
+        <span class="prefix">$</span> pip install -e ".[dev]" &amp;&amp; yaymeter check-environment
       </div>
       <div class="cta-actions">
         <a class="btn btn-primary" href="https://github.com/dkoul/yaymeter/blob/main/README.md">Read the docs →</a>
@@ -323,23 +255,25 @@ jobs:
     <footer class="footer">
       <div class="footer-inner">
         <div class="footer-brand">
-          <img src="assets/yaymeter-logo.png" alt="Yaymeter" width="180" height="66" />
-          <p>OpenAPI-driven functional and performance testing with JMeter. MIT licensed.</p>
+          <div class="logo-frame footer-logo-frame">
+            <img src="assets/yaymeter-logo.png" alt="Yaymeter" width="160" height="59" />
+          </div>
+          <p>JMeter's happy cousin. OpenAPI, MCP, CI-ready JMX, human reports.</p>
         </div>
         <div>
           <h4>Product</h4>
           <ul>
-            <li><a href="#gap">Why Yaymeter</a></li>
-            <li><a href="#layers">Test layers</a></li>
-            <li><a href="#ship">CI setup</a></li>
+            <li><a href="#jmeter">Why Yaymeter</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#mcp">MCP</a></li>
           </ul>
         </div>
         <div>
           <h4>Docs</h4>
           <ul>
             <li><a href="https://github.com/dkoul/yaymeter#1-install">Install</a></li>
-            <li><a href="https://github.com/dkoul/yaymeter#4-run-tests">Run tests</a></li>
-            <li><a href="https://github.com/dkoul/yaymeter#5-reuse-the-same-jmx-in-ci">CI reuse</a></li>
+            <li><a href="https://github.com/dkoul/yaymeter#mcp-servers-optional">MCP</a></li>
+            <li><a href="https://github.com/dkoul/yaymeter#5-reuse-the-same-jmx-in-ci">CI</a></li>
           </ul>
         </div>
         <div>
@@ -352,7 +286,7 @@ jobs:
           </ul>
         </div>
       </div>
-      <p class="footer-bottom">© Yaymeter · Built for testers who want the needle in the green zone.</p>
+      <p class="footer-bottom">© Yaymeter · Same horsepower as JMeter. A lot more yay.</p>
     </footer>
   </body>
 </html>
