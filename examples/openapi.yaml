@@ -1,0 +1,14 @@
+# Copy of the bookstore fixture for examples
+openapi: 3.0.3
+info:
+  title: Bookstore API
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8765
+paths:
+  /books:
+    get:
+      operationId: listBooks
+      responses:
+        "200":
+          description: OK
