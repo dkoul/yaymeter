@@ -65,6 +65,8 @@ def run_jmeter(
     results_dir: Path,
     run_id: str | None = None,
     timeout_seconds: float = 300.0,
+    jmeter_properties: dict[str, str | int | float] | None = None,
+    results_subdir: bool = True,
 ) -> tuple[Path, Path, RunManifest]:
     jmeter = find_jmeter()
     if not jmeter:
@@ -74,7 +76,8 @@ def run_jmeter(
         )
 
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
-    results_dir = Path(results_dir) / run_id
+    base_results = Path(results_dir)
+    results_dir = base_results / run_id if results_subdir else base_results
     results_dir.mkdir(parents=True, exist_ok=True)
 
     jtl = results_dir / "results.jtl"
@@ -90,6 +93,9 @@ def run_jmeter(
         "-j",
         str(log),
     ]
+    if jmeter_properties:
+        for key, value in jmeter_properties.items():
+            cmd.append(f"-J{key}={value}")
 
     started = utc_now_iso()
     proc = subprocess.run(

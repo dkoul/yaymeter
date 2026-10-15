@@ -48,7 +48,27 @@ def _elem(testclass: str, testname: str, **props: Any) -> ET.Element:
     return e
 
 
-def build_jmx(plan: TestPlan, profile: str, auth_header_env: str = "API_TEST_AUTH_TOKEN") -> str:
+def jmeter_load_properties(profile: str, threads: int = 1, ramp_seconds: int = 1, loops: int = 1) -> dict[str, int]:
+    """Build -J properties for yaymeter parametric JMX."""
+    if profile == "functional":
+        return {
+            "yaymeter.threads": 1,
+            "yaymeter.ramp_seconds": 1,
+            "yaymeter.loops": 1,
+        }
+    return {
+        "yaymeter.threads": threads,
+        "yaymeter.ramp_seconds": ramp_seconds,
+        "yaymeter.loops": loops,
+    }
+
+
+def build_jmx(
+    plan: TestPlan,
+    profile: str = "functional",
+    auth_header_env: str = "API_TEST_AUTH_TOKEN",
+    parametric: bool = True,
+) -> str:
     """Return JMX XML string."""
     root = ET.Element(
         "jmeterTestPlan",
@@ -66,14 +86,22 @@ def build_jmx(plan: TestPlan, profile: str, auth_header_env: str = "API_TEST_AUT
 
     tp_ht = ET.SubElement(hash_tree, "hashTree")
 
-    threads = 1
-    ramp = 1
-    loops = 1
-    duration = ""
-    if profile == "performance":
-        threads = 5
-        ramp = 10
-        duration = "30"
+    if parametric:
+        threads = "${__P(yaymeter.threads,1)}"
+        ramp = "${__P(yaymeter.ramp_seconds,1)}"
+        loops = "${__P(yaymeter.loops,1)}"
+        use_scheduler = False
+        duration = ""
+    else:
+        threads = 1
+        ramp = 1
+        loops = 1
+        duration = ""
+        use_scheduler = False
+        if profile == "performance":
+            threads = 10
+            ramp = 30
+            loops = 20
 
     tg = ET.SubElement(
         tp_ht,
@@ -87,12 +115,12 @@ def build_jmx(plan: TestPlan, profile: str, auth_header_env: str = "API_TEST_AUT
     ET.SubElement(tg, "elementProp", name="ThreadGroup.main_controller", elementType=LOOP_CONTROLLER)
     lc = tg.find("elementProp[@name='ThreadGroup.main_controller']")
     ET.SubElement(lc, "boolProp", name="LoopController.continue_forever").text = "false"
-    ET.SubElement(lc, "intProp", name="LoopController.loops").text = str(loops)
+    ET.SubElement(lc, "stringProp", name="LoopController.loops").text = str(loops)
     ET.SubElement(tg, "stringProp", name="ThreadGroup.num_threads").text = str(threads)
     ET.SubElement(tg, "stringProp", name="ThreadGroup.ramp_time").text = str(ramp)
-    ET.SubElement(tg, "boolProp", name="ThreadGroup.scheduler").text = "true" if duration else "false"
-    if duration:
-        ET.SubElement(tg, "stringProp", name="ThreadGroup.duration").text = duration
+    ET.SubElement(tg, "boolProp", name="ThreadGroup.scheduler").text = "true" if use_scheduler else "false"
+    if use_scheduler and duration:
+        ET.SubElement(tg, "stringProp", name="ThreadGroup.duration").text = str(duration)
     ET.SubElement(tg, "boolProp", name="ThreadGroup.same_user_on_next_iteration").text = "true"
 
     tg_ht = ET.SubElement(tp_ht, "hashTree")
@@ -184,8 +212,13 @@ def _add_http_sampler(parent_ht: ET.Element, base_url: str, test: TestCase) -> N
     ET.SubElement(s_ht, "hashTree")
 
 
-def write_jmx(plan: TestPlan, path: Path | str, profile: str = "functional") -> Path:
+def write_jmx(
+    plan: TestPlan,
+    path: Path | str,
+    profile: str = "functional",
+    parametric: bool = True,
+) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(build_jmx(plan, profile), encoding="utf-8")
+    p.write_text(build_jmx(plan, profile, parametric=parametric), encoding="utf-8")
     return p
