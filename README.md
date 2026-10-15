@@ -29,6 +29,29 @@ cd yaymeter
 pip install -e ".[dev]"
 ```
 
+For **MCP** (Model Context Protocol) servers:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+---
+
+## MCP servers (optional)
+
+Inventory tools from a live MCP server, generate a plan, and run with the MCP executor (stdio or Streamable HTTP):
+
+```bash
+# List tools → inventory JSON
+yaymeter inspect --mcp-url https://example.com/mcp --out mcp-inventory.json
+# or: yaymeter inspect --mcp-stdio 'npx -y @modelcontextprotocol/server-everything' --out mcp-inventory.json
+
+yaymeter plan --inventory mcp-inventory.json --config my-api.yaml --out generated-tests/plan.json
+yaymeter run --plan generated-tests/plan.json --config my-api.yaml --executor mcp --approve
+```
+
+MCP plans include tool calls (positive/negative), protocol checks, and metadata security scans. **JMeter export skips MCP cases**; Streamable HTTP load via JMX is planned separately.
+
 ---
 
 ## 2. Point at your API
@@ -143,7 +166,8 @@ jmeter -n \
   -j results/jmeter.log \
   -Jyaymeter.threads=1 \
   -Jyaymeter.ramp_seconds=1 \
-  -Jyaymeter.loops=1
+  -Jyaymeter.loops=1 \
+  -Jyaymeter.auth_token="$API_TEST_AUTH_TOKEN"
 ```
 
 **Load job** (nightly or gated)

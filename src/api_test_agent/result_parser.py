@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+from api_test_agent.jtl_aggregate import SampleAggregate, ingest_jtl_row
 from api_test_agent.models import (
     AssertionOutcome,
     AssertionResult,
@@ -18,20 +19,19 @@ from api_test_agent.python_executor import overall_from_assertions
 
 def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) -> NormalizedResults:
     """Map JTL samples to plan test cases by sampler label (test_id)."""
-    by_id = {t.test_id: t for t in plan.test_cases}
-    samples: dict[str, dict] = {}
+    aggregates: dict[str, SampleAggregate] = {}
 
     with jtl_path.open(encoding="utf-8", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            label = row.get("label") or row.get("Label") or ""
-            if not label:
-                continue
-            samples[label] = row
+            ingest_jtl_row(aggregates, row)
 
     records: list[ResultRecord] = []
+    total_samples = 0
+    total_failures = 0
+
     for test in sorted(plan.test_cases, key=lambda t: t.order):
-        if test.test_id not in samples:
+        if test.test_id not in aggregates:
             if test.blocked or test.category.value == "contract":
                 outcome = (
                     AssertionOutcome.BLOCKED if test.blocked else AssertionOutcome.SKIPPED
@@ -55,18 +55,22 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
                 )
             continue
 
-        row = samples[test.test_id]
-        success = (row.get("success") or row.get("Success") or "").lower() == "true"
+        agg = aggregates[test.test_id]
+        total_samples += agg.sample_count
+        total_failures += agg.failure_count
+        row = agg.last_row or {}
+
+        success = not agg.any_failure()
         status_raw = row.get("responseCode") or row.get("Response Code") or ""
         try:
             status = int(status_raw)
         except ValueError:
             status = None
-        elapsed_raw = row.get("elapsed") or row.get("Elapsed") or "0"
-        try:
-            elapsed = float(elapsed_raw)
-        except ValueError:
-            elapsed = None
+        if agg.response_codes and status is None:
+            status = sorted(agg.response_codes)[-1]
+
+        elapsed = agg.avg_elapsed_ms
+        p95 = agg.p95_elapsed_ms()
 
         assertions: list[AssertionResult] = []
         if success:
@@ -74,7 +78,7 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
                 AssertionResult(
                     name="jmeter_success",
                     outcome=AssertionOutcome.PASS,
-                    message="JMeter marked sample successful",
+                    message=f"{agg.sample_count} sample(s), 0 failures",
                 )
             )
         else:
@@ -83,7 +87,19 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
                 AssertionResult(
                     name="jmeter_success",
                     outcome=AssertionOutcome.FAIL,
-                    message=msg,
+                    message=f"{agg.failure_count}/{agg.sample_count} failed; last: {msg}",
+                )
+            )
+
+        if agg.sample_count > 1:
+            assertions.append(
+                AssertionResult(
+                    name="load_aggregate",
+                    outcome=AssertionOutcome.PASS if success else AssertionOutcome.FAIL,
+                    message=(
+                        f"samples={agg.sample_count} error_rate={agg.error_rate:.2%} "
+                        f"avg_ms={elapsed:.1f}" if elapsed is not None else f"samples={agg.sample_count}"
+                    ),
                 )
             )
 
@@ -97,13 +113,31 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
                     )
                 )
             else:
+                codes = sorted(agg.response_codes) if agg.response_codes else [status]
                 assertions.append(
                     AssertionResult(
                         name="status_code",
                         outcome=AssertionOutcome.FAIL,
-                        message=f"expected {test.expected.status_codes}, got {status}",
+                        message=f"expected {test.expected.status_codes}, saw {codes}",
                     )
                 )
+
+        if test.expected.response_schema and success:
+            assertions.append(
+                AssertionResult(
+                    name="response_schema",
+                    outcome=AssertionOutcome.PASS,
+                    message="JMX JSONPath checks on required fields (not full jsonschema)",
+                )
+            )
+
+        artifact_refs = {}
+        if agg.sample_count > 1:
+            artifact_refs["sample_count"] = str(agg.sample_count)
+            artifact_refs["failure_count"] = str(agg.failure_count)
+            artifact_refs["error_rate"] = f"{agg.error_rate:.4f}"
+            if p95 is not None:
+                artifact_refs["p95_elapsed_ms"] = f"{p95:.2f}"
 
         records.append(
             ResultRecord(
@@ -116,6 +150,7 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
                 elapsed_ms=elapsed,
                 assertions=assertions,
                 overall=overall_from_assertions(assertions),
+                artifact_refs=artifact_refs,
             )
         )
 
@@ -123,4 +158,10 @@ def parse_jtl(jtl_path: Path, plan: TestPlan, run_id: str, target_label: str) ->
     for r in records:
         summary[r.overall.value] = summary.get(r.overall.value, 0) + 1
 
-    return NormalizedResults(run_id=run_id, records=records, summary=summary)
+    load_stats = {
+        "total_jtl_samples": total_samples,
+        "total_jtl_failures": total_failures,
+        "global_error_rate": (total_failures / total_samples) if total_samples else 0.0,
+    }
+
+    return NormalizedResults(run_id=run_id, records=records, summary=summary, load_stats=load_stats)

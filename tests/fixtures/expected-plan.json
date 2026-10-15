@@ -1,12 +1,13 @@
 {
   "spec_hash": "cb84c777330b90e8bfef21476833c15c929f3257f2cef67d246a4ef06d00e744",
-  "test_case_count": 7,
+  "test_case_count": 8,
   "test_ids": [
     "contract_listbooks_declared",
     "positive_listbooks_minimal",
     "contract_createbook_declared",
     "positive_createbook_minimal",
     "negative_createbook_missing_required",
+    "boundary_createbook_title_minlen",
     "contract_getbook_declared",
     "positive_getbook_minimal"
   ]

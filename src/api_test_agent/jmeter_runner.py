@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from api_test_agent.jmeter_install import local_jmeter_bin, runtime_env
+from api_test_agent.jmeter_props import redact_command_args
 from api_test_agent.models import RunManifest, utc_now_iso
 
 
@@ -125,7 +126,7 @@ def run_jmeter(
             "jtl": str(jtl),
             "jmeter_log": str(log),
         },
-        command_args=cmd,
+        command_args=redact_command_args(cmd),
     )
 
     (results_dir / "jmeter_stdout.txt").write_text(proc.stdout or "", encoding="utf-8")

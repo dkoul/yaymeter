@@ -10,7 +10,9 @@ from pathlib import Path
 import click
 
 from api_test_agent import __version__
-from api_test_agent.api_inventory import inventory_to_json
+from api_test_agent.api_inventory import inventory_to_json, load_inventory_json
+from api_test_agent.mcp_executor import execute_mcp_plan
+from api_test_agent.mcp_inventory import McpInventoryError, fetch_mcp_inventory, transport_from_cli
 from api_test_agent.config import load_config
 from api_test_agent.coverage import compute_coverage
 from api_test_agent.jmeter_install import (
@@ -27,13 +29,20 @@ from api_test_agent.jmeter_runner import (
     jmeter_version as query_jmeter_version,
     run_jmeter,
 )
-from api_test_agent.jmx_builder import jmeter_load_properties, write_jmx
+from api_test_agent.jmeter_props import jmeter_properties_for_run
+from api_test_agent.jmx_builder import write_jmx
 from api_test_agent.models import RunManifest, TestPlan, utc_now_iso
 from api_test_agent.openapi_loader import load_inventory
 from api_test_agent.python_executor import execute_plan
 from api_test_agent.report import render_report, write_report
 from api_test_agent.result_parser import parse_jtl
-from api_test_agent.safety import validate_plan_for_run, validate_target_url
+from api_test_agent.safety import (
+    SafetyViolation,
+    check_global_error_rate,
+    validate_jmeter_run_limits,
+    validate_plan_for_run,
+    validate_target_url,
+)
 from api_test_agent.test_design import generate_plan, plan_to_json, validate_plan
 
 
@@ -132,11 +141,27 @@ def install_jmeter_cmd(
 
 
 @main.command("inspect")
-@click.option("--spec", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--spec", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--mcp-url", default=None, help="Streamable HTTP MCP endpoint URL")
+@click.option("--mcp-stdio", default=None, help='Stdio server command, e.g. "npx -y @modelcontextprotocol/server-everything"')
 @click.option("--out", type=click.Path(path_type=Path), default=None, help="Write inventory JSON")
-def inspect_cmd(spec: Path, out: Path | None) -> None:
-    """Validate spec and print operation inventory."""
-    inventory = load_inventory(spec)
+def inspect_cmd(
+    spec: Path | None,
+    mcp_url: str | None,
+    mcp_stdio: str | None,
+    out: Path | None,
+) -> None:
+    """Validate OpenAPI or list tools from a live MCP server."""
+    try:
+        if mcp_url or mcp_stdio:
+            transport = transport_from_cli(mcp_url, mcp_stdio)
+            inventory = fetch_mcp_inventory(transport)
+        elif spec:
+            inventory = load_inventory(spec)
+        else:
+            raise click.ClickException("Provide --spec or --mcp-url / --mcp-stdio")
+    except (McpInventoryError, ImportError) as exc:
+        raise click.ClickException(str(exc)) from exc
     text = inventory_to_json(inventory)
     if out:
         out.write_text(text + "\n", encoding="utf-8")
@@ -146,17 +171,25 @@ def inspect_cmd(spec: Path, out: Path | None) -> None:
 
 
 @main.command("plan")
-@click.option("--spec", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--spec", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--inventory", type=click.Path(exists=True, path_type=Path), default=None)
 @click.option("--config", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--out", required=True, type=click.Path(path_type=Path))
-def plan_cmd(spec: Path, config: Path, out: Path) -> None:
-    """Generate deterministic test plan JSON."""
-    inventory = load_inventory(spec)
+def plan_cmd(spec: Path | None, inventory: Path | None, config: Path, out: Path) -> None:
+    """Generate deterministic test plan JSON from OpenAPI or MCP inventory."""
+    if inventory:
+        inv = load_inventory_json(inventory)
+    elif spec:
+        inv = load_inventory(spec)
+    else:
+        raise click.ClickException("Provide --spec or --inventory")
     cfg = load_config(config)
-    plan = generate_plan(inventory, cfg)
+    plan = generate_plan(inv, cfg)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(plan_to_json(plan) + "\n", encoding="utf-8")
     click.echo(f"Wrote {len(plan.test_cases)} test cases to {out}")
+    if plan.transport == "mcp":
+        click.echo("MCP plan: run with `yaymeter run --executor mcp` (JMeter export skips MCP cases)")
 
 
 @main.command("export-jmx")
@@ -168,10 +201,12 @@ def plan_cmd(spec: Path, config: Path, out: Path) -> None:
     show_default=True,
     help="Stable JMX path to commit and reuse in CI",
 )
-def export_jmx_cmd(plan: Path, out: Path) -> None:
+@click.option("--config", type=click.Path(exists=True, path_type=Path), default=None, help="Auth header policy from config")
+def export_jmx_cmd(plan: Path, out: Path, config: Path | None) -> None:
     """Write a parametric JMeter plan (one file for functional and load runs)."""
     model = TestPlan.model_validate(json.loads(plan.read_text(encoding="utf-8")))
-    write_jmx(model, out, profile="functional", parametric=True)
+    auth = load_config(config).auth if config else None
+    write_jmx(model, out, profile="functional", parametric=True, auth=auth)
     click.echo(f"Wrote {out}")
     click.echo(
         "Functional: yaymeter run-jmx --jmx "
@@ -210,15 +245,21 @@ def run_jmx_cmd(
         if not cfg.allow_performance and threads > 1:
             raise click.ClickException("Set allow_performance: true in config for multi-user runs")
 
+    profile = "performance" if is_load else "functional"
+    if threads > cfg.safety.max_concurrency and not approve:
+        raise click.ClickException(
+            f"threads={threads} exceeds max_concurrency={cfg.safety.max_concurrency}; use --approve"
+        )
+    if ramp_seconds > cfg.safety.max_ramp_up_seconds:
+        raise click.ClickException(
+            f"ramp_seconds={ramp_seconds} exceeds max_ramp_up_seconds={cfg.safety.max_ramp_up_seconds}"
+        )
+
     if not find_jmeter():
         click.echo("Setting up portable Java + JMeter in .tools/ (one-time download)...", err=True)
         ensure_jmeter(project_root=Path.cwd(), with_java=True)
 
-    props = {
-        "yaymeter.threads": threads,
-        "yaymeter.ramp_seconds": ramp_seconds,
-        "yaymeter.loops": loops,
-    }
+    props = jmeter_properties_for_run(cfg, profile, threads, ramp_seconds, loops)
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
     jtl_parent = Path(run_dir)
     jtl, _log, manifest = run_jmeter(
@@ -260,9 +301,9 @@ def validate_plan_cmd(plan: Path) -> None:
 @click.option("--approve", is_flag=True, help="Approve mutations or performance tests")
 @click.option(
     "--executor",
-    type=click.Choice(["jmeter", "python"]),
+    type=click.Choice(["jmeter", "python", "mcp"]),
     default="jmeter",
-    help="jmeter (default; auto-installs portable JRE+JMeter in .tools/) or python",
+    help="jmeter (default), python (HTTP), or mcp (Model Context Protocol)",
 )
 @click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
 @click.option("--run-id", default=None, help="Optional run id")
@@ -280,6 +321,15 @@ def run_cmd(
     model = TestPlan.model_validate(json.loads(plan.read_text(encoding="utf-8")))
     validate_plan_for_run(model, cfg, profile, approve)
 
+    if model.transport == "mcp":
+        executor = "mcp"
+    if profile == "performance" and executor in ("python", "mcp"):
+        raise click.ClickException("Performance profile requires JMeter executor")
+    if executor == "mcp" and profile == "performance":
+        raise click.ClickException(
+            "MCP load testing via JMeter is not implemented; use functional profile"
+        )
+
     if profile == "performance" and executor == "python":
         click.echo(
             "Performance profile uses JMeter for load metrics; switching to jmeter executor.",
@@ -291,10 +341,10 @@ def run_cmd(
     gen_dir = Path("generated-tests") / run_id
     gen_dir.mkdir(parents=True, exist_ok=True)
     jmx_path = gen_dir / "plan.jmx"
-    write_jmx(model, jmx_path, profile=profile, parametric=True)
+    write_jmx(model, jmx_path, profile=profile, parametric=True, auth=cfg.auth)
     stable_jmx = Path("generated-tests/plan.jmx")
     if stable_jmx.resolve() != jmx_path.resolve():
-        write_jmx(model, stable_jmx, profile=profile, parametric=True)
+        write_jmx(model, stable_jmx, profile=profile, parametric=True, auth=cfg.auth)
 
     out_run = Path(run_dir) / run_id
     out_run.mkdir(parents=True, exist_ok=True)
@@ -316,10 +366,20 @@ def run_cmd(
         artifacts={"jmx": str(jmx_path)},
     )
 
-    if executor == "python":
+    if executor == "mcp":
+        try:
+            results = execute_mcp_plan(model, cfg, out_run, run_id, cfg.target_label)
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
+        manifest.artifacts["results_json"] = str(out_run / "results.json")
+        manifest.artifacts["executor"] = "mcp"
+    elif executor == "python":
         results = execute_plan(model, cfg, out_run, run_id, cfg.target_label)
         manifest.artifacts["results_json"] = str(out_run / "results.json")
+        manifest.artifacts["executor"] = "python"
     else:
+        if model.transport == "mcp":
+            raise click.ClickException("MCP plans require --executor mcp")
         if not find_jmeter():
             click.echo(
                 "Setting up portable Java + JMeter in .tools/ (one-time download)...",
@@ -331,12 +391,11 @@ def run_cmd(
                 click.echo(f"Runtime setup failed: {exc}", err=True)
                 raise SystemExit(2) from exc
         try:
-            jprops = jmeter_load_properties(
-                profile,
-                threads=cfg.performance.threads,
-                ramp_seconds=cfg.performance.ramp_up_seconds,
-                loops=cfg.performance.loops,
-            )
+            threads = cfg.performance.threads if profile == "performance" else 1
+            loops = cfg.performance.loops if profile == "performance" else 1
+            ramp = cfg.performance.ramp_up_seconds if profile == "performance" else 1
+            validate_jmeter_run_limits(model, cfg, profile, threads, loops, ramp, approve)
+            jprops = jmeter_properties_for_run(cfg, profile, threads, ramp, loops)
             jtl, log, jm_manifest = run_jmeter(
                 jmx_path,
                 Path(run_dir),
@@ -350,9 +409,15 @@ def run_cmd(
                 click.echo("JMeter did not produce JTL; check logs.", err=True)
                 raise SystemExit(2)
             results = parse_jtl(jtl, model, run_id, cfg.target_label)
+            try:
+                check_global_error_rate(results.summary, results.load_stats, cfg)
+            except SafetyViolation as exc:
+                click.echo(f"Safety: {exc}", err=True)
+                raise SystemExit(1) from exc
             (out_run / "results.json").write_text(
                 results.model_dump_json(indent=2), encoding="utf-8"
             )
+            manifest.artifacts["executor"] = "jmeter"
         except JMeterNotFoundError as e:
             click.echo(str(e), err=True)
             raise SystemExit(2) from e

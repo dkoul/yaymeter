@@ -85,7 +85,7 @@ def test_discover_jdk_home_picks_newest(tmp_path: Path):
     assert discover_jdk_home(tools) == new
 
 
-def test_download_bytes_retries_on_ssl_failure():
+def test_download_bytes_insecure_opt_in():
     payload = b"archive-bytes"
     good_response = MagicMock()
     good_response.read.return_value = payload
@@ -93,11 +93,12 @@ def test_download_bytes_retries_on_ssl_failure():
     good_response.__exit__ = MagicMock(return_value=False)
 
     ssl_err = ssl.SSLCertVerificationError("certificate verify failed")
-    with patch(
-        "api_test_agent.jmeter_install.urlopen",
-        side_effect=[URLError(ssl_err), good_response],
-    ) as mock_open:
-        assert download_bytes("https://example.test/file.tgz", timeout=10) == payload
+    with patch.dict("os.environ", {"YAYMETER_INSECURE_DOWNLOAD": "1"}):
+        with patch(
+            "api_test_agent.jmeter_install.urlopen",
+            side_effect=[ssl_err, good_response],
+        ) as mock_open:
+            assert download_bytes("https://example.test/file.tgz", timeout=10) == payload
     assert mock_open.call_count == 2
     assert mock_open.call_args_list[1].kwargs.get("context") is not None
 

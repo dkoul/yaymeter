@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -10,10 +12,16 @@ import ssl
 import subprocess
 import tarfile
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Iterable
 from urllib.error import URLError
 from urllib.request import urlopen
+
+try:
+    import certifi
+except ImportError:  # pragma: no cover
+    certifi = None
 
 DEFAULT_JMETER_VERSION = "5.6.3"
 MIN_JMETER_VERSION = (5, 6)
@@ -48,20 +56,100 @@ def _unverified_ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+def _ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
 def download_bytes(url: str, timeout: float) -> bytes:
-    """
-    Fetch URL bytes, retrying without certificate verification on typical macOS/Python SSL failures.
-    """
+    """Fetch URL bytes with verified TLS (certifi). Opt-in insecure fallback via env."""
+    insecure = os.environ.get("YAYMETER_INSECURE_DOWNLOAD") == "1"
     try:
-        with urlopen(url, timeout=timeout) as response:
+        with urlopen(url, timeout=timeout, context=_ssl_context()) as response:
             return response.read()
-    except ssl.SSLCertVerificationError:
-        pass
+    except ssl.SSLCertVerificationError as exc:
+        if insecure:
+            warnings.warn(
+                "YAYMETER_INSECURE_DOWNLOAD=1: downloading without TLS verification",
+                stacklevel=2,
+            )
+            with urlopen(url, timeout=timeout, context=_unverified_ssl_context()) as response:
+                return response.read()
+        raise JMeterInstallError(
+            "TLS certificate verification failed while downloading runtime. "
+            "Install certifi (included with yaymeter) or fix system CA certificates. "
+            "Last resort only: YAYMETER_INSECURE_DOWNLOAD=1"
+        ) from exc
     except (URLError, TimeoutError, OSError) as exc:
-        if not _is_ssl_verify_error(exc):
-            raise
-    with urlopen(url, timeout=timeout, context=_unverified_ssl_context()) as response:
-        return response.read()
+        if _is_ssl_verify_error(exc) and insecure:
+            warnings.warn(
+                "YAYMETER_INSECURE_DOWNLOAD=1: downloading without TLS verification",
+                stacklevel=2,
+            )
+            with urlopen(url, timeout=timeout, context=_unverified_ssl_context()) as response:
+                return response.read()
+        raise
+
+
+def _verify_sha512(data: bytes, expected_line: str, filename: str) -> None:
+    """Parse Apache-style sha512 sum file and verify archive bytes."""
+    digest = None
+    for line in expected_line.splitlines():
+        line = line.strip()
+        if not line or filename not in line:
+            continue
+        parts = line.split()
+        if parts:
+            digest = parts[0].lower()
+            break
+    if not digest:
+        raise JMeterInstallError(f"Could not parse checksum for {filename}")
+    actual = hashlib.sha512(data).hexdigest().lower()
+    if actual != digest:
+        raise JMeterInstallError(f"Checksum mismatch for {filename}")
+
+
+def _verify_jmeter_archive(version: str, archive_bytes: bytes) -> None:
+    archive_name = f"apache-jmeter-{version}.tgz"
+    checksum_urls = [
+        f"https://dlcdn.apache.org/jmeter/binaries/{archive_name}.sha512",
+        f"https://archive.apache.org/dist/jmeter/binaries/{archive_name}.sha512",
+    ]
+    last_error: Exception | None = None
+    for url in checksum_urls:
+        try:
+            checksum_text = download_bytes(url, timeout=60).decode("utf-8", errors="replace")
+            _verify_sha512(archive_bytes, checksum_text, archive_name)
+            return
+        except (URLError, TimeoutError, OSError, JMeterInstallError) as exc:
+            last_error = exc
+    raise JMeterInstallError(f"Could not verify JMeter archive checksum: {last_error}")
+
+
+def adoptium_jre_asset() -> dict:
+    os_name, arch = adoptium_platform()
+    api_url = (
+        "https://api.adoptium.net/v3/assets/latest/"
+        f"{DEFAULT_JAVA_FEATURE}/hotspot?architecture={arch}&image_type=jre&os={os_name}&vendor=eclipse"
+    )
+    raw = download_bytes(api_url, timeout=120)
+    assets = json.loads(raw.decode("utf-8"))
+    if not assets:
+        raise JMeterInstallError("Adoptium API returned no JRE assets")
+    return assets[0]
+
+
+def _verify_adoptium_archive(asset: dict, archive_bytes: bytes) -> None:
+    for checksum in asset.get("checksums", []):
+        if checksum.get("algorithm") != "sha256":
+            continue
+        expected = checksum.get("checksum", "").lower()
+        actual = hashlib.sha256(archive_bytes).hexdigest().lower()
+        if actual != expected:
+            raise JMeterInstallError("Adoptium JRE archive checksum mismatch")
+        return
+    raise JMeterInstallError("Adoptium asset metadata missing sha256 checksum")
 
 
 def resolve_jdk_home(candidate: Path) -> Path | None:
@@ -204,12 +292,19 @@ def install_portable_java(
             "Install a JRE manually or use --executor python for functional tests."
         )
 
-    url = adoptium_jre_url()
+    try:
+        asset = adoptium_jre_asset()
+        download_link = asset["binary"]["package"]["link"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise JMeterInstallError(f"Could not resolve Adoptium JRE download: {exc}") from exc
+
     with tempfile.TemporaryDirectory() as tmp:
         archive_path = Path(tmp) / "temurin-jre.tar.gz"
         try:
-            archive_path.write_bytes(download_bytes(url, timeout=300))
-        except (URLError, TimeoutError, OSError) as exc:
+            archive_bytes = download_bytes(download_link, timeout=300)
+            _verify_adoptium_archive(asset, archive_bytes)
+            archive_path.write_bytes(archive_bytes)
+        except (URLError, TimeoutError, OSError, JMeterInstallError) as exc:
             raise JMeterInstallError(f"Could not download portable JRE: {exc}") from exc
 
         with tarfile.open(archive_path, "r:gz") as tar:
@@ -306,9 +401,11 @@ def download_jmeter_archive(version: str, dest: Path) -> Path:
     last_error: Exception | None = None
     for url in jmeter_download_urls(version):
         try:
-            dest.write_bytes(download_bytes(url, timeout=120))
+            archive_bytes = download_bytes(url, timeout=120)
+            _verify_jmeter_archive(version, archive_bytes)
+            dest.write_bytes(archive_bytes)
             return dest
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, JMeterInstallError) as exc:
             last_error = exc
     raise JMeterInstallError(
         f"Could not download Apache JMeter {version} from Apache mirrors: {last_error}"

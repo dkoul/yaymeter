@@ -84,20 +84,37 @@ def _minimal_json_from_schema(schema: dict[str, Any] | None, rng: random.Random)
     return "test"
 
 
-def _fill_path(path: str, op: OperationModel, rng: random.Random) -> str:
+def _fill_path(
+    path: str,
+    op: OperationModel,
+    rng: random.Random,
+    overrides: dict[str, str] | None = None,
+) -> str:
+    overrides = overrides or {}
     result = path
     for param in op.parameters:
         if param.location != "path":
             continue
-        val = "1"
-        if param.enum:
-            val = str(param.enum[0])
-        elif param.schema_type == "integer":
-            val = str(int(param.minimum or 1))
-        elif param.schema_type == "string":
-            val = "sample"
+        if param.name in overrides:
+            val = overrides[param.name]
+        else:
+            val = "1"
+            if param.enum:
+                val = str(param.enum[0])
+            elif param.schema_type == "integer":
+                val = str(int(param.minimum or 1))
+            elif param.schema_type == "string":
+                val = "sample"
         result = result.replace("{" + param.name + "}", val)
     return result
+
+
+def _auth_error_codes(op: OperationModel) -> list[int]:
+    codes: list[int] = []
+    for r in op.responses:
+        if r.status_code in ("401", "403"):
+            codes.append(int(r.status_code))
+    return codes or [401, 403]
 
 
 def _test_id(category: str, operation_id: str, suffix: str) -> str:
@@ -105,6 +122,11 @@ def _test_id(category: str, operation_id: str, suffix: str) -> str:
 
 
 def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
+    if inventory.inventory_kind == "mcp":
+        from api_test_agent.mcp_plan import generate_mcp_plan
+
+        return generate_mcp_plan(inventory, config)
+
     rng = random.Random(config.seed)
     cases: list[TestCase] = []
     order = 0
@@ -252,10 +274,22 @@ def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
             if param.max_length is not None:
                 order += 1
                 long_val = "x" * (param.max_length + 1)
-                q = {}
+                q: dict[str, str] = {}
+                headers: dict[str, str] = {}
+                path_overrides: dict[str, str] = {}
+                blocked = False
+                blocked_reason = None
                 if param.location == "query":
                     q[param.name] = long_val
-                path = _fill_path(op.path, op, rng)
+                elif param.location == "path":
+                    path_overrides[param.name] = long_val
+                elif param.location == "header":
+                    headers[param.name] = long_val
+                elif param.location == "cookie":
+                    blocked = True
+                    blocked_reason = "cookie parameters are not supported in JMeter export"
+
+                path = _fill_path(op.path, op, rng, path_overrides)
                 cases.append(
                     TestCase(
                         test_id=_test_id("boundary", op.operation_id, f"{param.name}_maxlen"),
@@ -266,6 +300,7 @@ def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
                             method=op.method,
                             path=path,
                             query=q,
+                            headers=headers,
                         ),
                         expected=TestExpected(status_codes=errors + success),
                         expectation_source=ExpectationSource.OPENAPI,
@@ -278,10 +313,133 @@ def generate_plan(inventory: ApiInventory, config: AgentConfig) -> TestPlan:
                             parameters=[param.name],
                             schema_constraints=["maxLength"],
                         ),
+                        blocked=blocked,
+                        blocked_reason=blocked_reason,
                     )
                 )
 
+        # Negative: wrong type on first required integer property
+        if op.request_body_schema and isinstance(op.request_body_schema, dict):
+            props = op.request_body_schema.get("properties", {})
+            required_fields = op.request_body_schema.get("required", [])
+            for field in required_fields:
+                field_schema = props.get(field, {})
+                if field_schema.get("type") == "integer":
+                    bad_body = _minimal_json_from_schema(op.request_body_schema, rng)
+                    if isinstance(bad_body, dict):
+                        bad_body[field] = "not-an-integer"
+                    order += 1
+                    cases.append(
+                        TestCase(
+                            test_id=_test_id("negative", op.operation_id, f"wrong_type_{field}"),
+                            operation_id=op.operation_id,
+                            order=order,
+                            category=TestCategory.NEGATIVE,
+                            request=TestRequest(
+                                method=op.method,
+                                path=_fill_path(op.path, op, rng),
+                                body=bad_body,
+                            ),
+                            expected=TestExpected(status_codes=errors),
+                            expectation_source=ExpectationSource.OPENAPI,
+                            rationale=f"Send string where integer expected for {field!r}",
+                            risk=RiskLevel.LOW,
+                            priority=42,
+                            safety_class=safety,
+                            requires_approval=pos.requires_approval,
+                            coverage_targets=CoverageTargets(
+                                parameters=[field],
+                                schema_constraints=["type"],
+                            ),
+                        )
+                    )
+                    break
+
+            for field, field_schema in props.items():
+                min_len = field_schema.get("minLength")
+                if isinstance(min_len, int) and min_len > 0:
+                    short_body = _minimal_json_from_schema(op.request_body_schema, rng)
+                    if isinstance(short_body, dict) and field in short_body:
+                        short_body[field] = "a" * max(0, min_len - 1)
+                    order += 1
+                    cases.append(
+                        TestCase(
+                            test_id=_test_id("boundary", op.operation_id, f"{field}_minlen"),
+                            operation_id=op.operation_id,
+                            order=order,
+                            category=TestCategory.BOUNDARY,
+                            request=TestRequest(
+                                method=op.method,
+                                path=_fill_path(op.path, op, rng),
+                                body=short_body,
+                            ),
+                            expected=TestExpected(status_codes=errors),
+                            expectation_source=ExpectationSource.OPENAPI,
+                            rationale=f"Violate minLength on body field {field!r}",
+                            risk=RiskLevel.LOW,
+                            priority=48,
+                            safety_class=safety,
+                            requires_approval=pos.requires_approval,
+                            coverage_targets=CoverageTargets(
+                                parameters=[field],
+                                schema_constraints=["minLength"],
+                            ),
+                        )
+                    )
+                    break
+
+        # Security-basic when operation declares security
+        if op.security and config.auth.type != "none":
+            auth_errors = _auth_error_codes(op)
+            order += 1
+            cases.append(
+                TestCase(
+                    test_id=_test_id("security", op.operation_id, "no_auth"),
+                    operation_id=op.operation_id,
+                    order=order,
+                    category=TestCategory.SECURITY_BASIC,
+                    request=TestRequest(
+                        method=op.method,
+                        path=_fill_path(op.path, op, rng),
+                        body=body if op.method in ("POST", "PUT", "PATCH") else None,
+                        headers={"_yaymeter_auth_mode": "none"},
+                    ),
+                    expected=TestExpected(status_codes=auth_errors),
+                    expectation_source=ExpectationSource.OPENAPI,
+                    rationale="Protected operation should reject missing credentials",
+                    risk=RiskLevel.LOW,
+                    priority=35,
+                    safety_class=SafetyClass.READ_ONLY,
+                    requires_approval=False,
+                    coverage_targets=CoverageTargets(operation=True),
+                )
+            )
+            order += 1
+            cases.append(
+                TestCase(
+                    test_id=_test_id("security", op.operation_id, "bad_token"),
+                    operation_id=op.operation_id,
+                    order=order,
+                    category=TestCategory.SECURITY_BASIC,
+                    request=TestRequest(
+                        method=op.method,
+                        path=_fill_path(op.path, op, rng),
+                        body=body if op.method in ("POST", "PUT", "PATCH") else None,
+                        headers={"_yaymeter_auth_mode": "invalid"},
+                    ),
+                    expected=TestExpected(status_codes=auth_errors),
+                    expectation_source=ExpectationSource.OPENAPI,
+                    rationale="Protected operation should reject invalid token",
+                    risk=RiskLevel.LOW,
+                    priority=36,
+                    safety_class=SafetyClass.READ_ONLY,
+                    requires_approval=False,
+                    coverage_targets=CoverageTargets(operation=True),
+                )
+            )
+
     return TestPlan(
+        transport="http",
         spec_hash=inventory.spec_hash,
         config_hash=config.config_hash(),
         seed=config.seed,

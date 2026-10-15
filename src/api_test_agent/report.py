@@ -24,6 +24,13 @@ def render_report(
         lines.append(f"- Started: {manifest.started_at}")
         if manifest.jmeter_version:
             lines.append(f"- JMeter: {manifest.jmeter_version}")
+        executor = manifest.artifacts.get("executor", "jmeter")
+        lines.append(f"- Executor: {executor}")
+        if executor == "jmeter":
+            lines.append(
+                "- Schema checks: JSONPath presence on required fields in JMX; "
+                "full jsonschema validation only with `--executor python`"
+            )
     lines.append(f"- Tool version: {plan.generator_version}")
     lines.append(f"- Seed: {plan.seed}")
     total = sum(results.summary.values())
@@ -31,6 +38,12 @@ def render_report(
     overall = "PASS" if fails == 0 else "FAIL"
     lines.append(f"- Overall status: **{overall}**")
     lines.append(f"- Result counts: {results.summary}")
+    if results.load_stats.get("total_jtl_samples", 0) > 0:
+        lines.append(
+            f"- JTL samples: {results.load_stats.get('total_jtl_samples')} "
+            f"(failures {results.load_stats.get('total_jtl_failures', 0)}, "
+            f"error rate {float(results.load_stats.get('global_error_rate', 0)):.2%})"
+        )
     lines.append("")
 
     lines.append("## Executive findings")
