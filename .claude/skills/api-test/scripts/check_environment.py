@@ -4,7 +4,8 @@ import sys
 
 
 def main() -> int:
-    return subprocess.call([sys.executable, "-m", "api_test_agent.cli", "check-environment"])
+    args = ["-m", "api_test_agent.cli", "check-environment"] + sys.argv[1:]
+    return subprocess.call([sys.executable, *args])
 
 
 if __name__ == "__main__":

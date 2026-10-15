@@ -10,6 +10,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from api_test_agent.jmeter_install import local_jmeter_bin
 from api_test_agent.models import RunManifest, utc_now_iso
 
 
@@ -18,11 +19,15 @@ class JMeterNotFoundError(Exception):
 
 
 def find_jmeter() -> str | None:
-    env = os.environ.get("JMETER_HOME")
-    if env:
-        candidate = Path(env) / "bin" / "jmeter"
-        if candidate.exists():
-            return str(candidate)
+    for env_name in ("JMETER_HOME", "API_TEST_JMETER_HOME"):
+        env = os.environ.get(env_name)
+        if env:
+            candidate = Path(env) / "bin" / "jmeter"
+            if candidate.exists():
+                return str(candidate)
+    local = local_jmeter_bin()
+    if local:
+        return local
     return shutil.which("jmeter")
 
 
@@ -39,8 +44,18 @@ def jmeter_version(jmeter_bin: str | None = None) -> str | None:
             check=False,
         )
         out = (proc.stdout or "") + (proc.stderr or "")
-        m = re.search(r"Version\s+([\d.]+)", out)
-        return m.group(1) if m else out.strip()[:80] or None
+        for pattern in (
+            r"Version\s+([\d.]+)",
+            r"\\_\s+([\d]+\.[\d]+\.[\d]+)\s*$",
+            r"Apache JMeter\s*\(?([\d.]+)\)?",
+        ):
+            m = re.search(pattern, out, re.MULTILINE | re.IGNORECASE)
+            if m:
+                return m.group(1)
+        found = re.findall(r"\b(\d+\.\d+\.\d+)\b", out)
+        if found:
+            return found[-1]
+        return None
     except (OSError, subprocess.TimeoutExpired):
         return None
 
@@ -54,7 +69,8 @@ def run_jmeter(
     jmeter = find_jmeter()
     if not jmeter:
         raise JMeterNotFoundError(
-            "JMeter not found. Install Apache JMeter and ensure `jmeter` is on PATH or set JMETER_HOME."
+            "JMeter not found. Run `api-test-agent install-jmeter` or set JMETER_HOME / PATH. "
+            "See `api-test-agent check-environment --help`."
         )
 
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"

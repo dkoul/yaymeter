@@ -5,7 +5,8 @@ OpenAPI-driven functional API testing with deterministic Python planning and Apa
 ## Requirements
 
 - Python 3.11+
-- Apache JMeter 5.6+ (optional if using `--executor python`)
+- Apache JMeter 5.6+ (optional if using `--executor python`; can be installed into `.tools/` via CLI)
+- Java 8+ (required when using JMeter)
 
 ## Install
 
@@ -17,6 +18,8 @@ pip install -e ".[dev]"
 
 ```bash
 api-test-agent check-environment
+api-test-agent install-jmeter
+source .tools/jmeter-env.sh
 api-test-agent inspect --spec tests/fixtures/bookstore-openapi.yaml
 api-test-agent plan --spec tests/fixtures/bookstore-openapi.yaml --config examples/test-config.yaml --out generated-tests/plan.json
 api-test-agent validate-plan --plan generated-tests/plan.json

@@ -4,7 +4,7 @@ Use this skill to inspect an OpenAPI spec, build a deterministic test plan, obta
 
 ## Workflow
 
-1. **Environment** — Run `python3 .claude/skills/api-test/scripts/check_environment.py` and confirm Python/JMeter versions.
+1. **Environment** — Run `python3 .claude/skills/api-test/scripts/check_environment.py`. If JMeter is missing, run `python3 .claude/skills/api-test/scripts/install_jmeter.py` (requires Java on PATH). Then `source .tools/jmeter-env.sh` or add `.tools/bin` to PATH.
 2. **Inspect** — `inspect_openapi.py --spec <path>` to validate the spec and list operations.
 3. **Plan** — `build_plan.py --spec <path> --config <yaml> --out generated-tests/plan.json`.
 4. **Review** — Present test counts, mutation/performance cases, and `requires_approval` flags. Do not run destructive or load tests without explicit user approval.
@@ -16,6 +16,8 @@ Use this skill to inspect an OpenAPI spec, build a deterministic test plan, obta
 
 ```bash
 pip install -e ".[dev]"
+api-test-agent install-jmeter   # optional: downloads Apache JMeter 5.6.3 to .tools/
+source .tools/jmeter-env.sh
 api-test-agent inspect --spec <spec>
 api-test-agent plan --spec <spec> --config <config> --out generated-tests/plan.json
 api-test-agent validate-plan --plan generated-tests/plan.json
@@ -36,3 +38,4 @@ api-test-agent report --run-dir results/<run-id> --spec <spec>
 - `references/safety-policy.md`
 - `references/coverage-model.md`
 - `references/reporting-contract.md`
+- `references/jmeter-bootstrap.md`

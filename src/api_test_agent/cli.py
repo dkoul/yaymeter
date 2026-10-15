@@ -13,7 +13,18 @@ from api_test_agent import __version__
 from api_test_agent.api_inventory import inventory_to_json
 from api_test_agent.config import load_config
 from api_test_agent.coverage import compute_coverage
-from api_test_agent.jmeter_runner import JMeterNotFoundError, find_jmeter, jmeter_version, run_jmeter
+from api_test_agent.jmeter_install import (
+    activation_instructions,
+    ensure_jmeter,
+    find_java,
+    install_jmeter,
+)
+from api_test_agent.jmeter_runner import (
+    JMeterNotFoundError,
+    find_jmeter,
+    jmeter_version as query_jmeter_version,
+    run_jmeter,
+)
 from api_test_agent.jmx_builder import write_jmx
 from api_test_agent.models import RunManifest, TestPlan, utc_now_iso
 from api_test_agent.openapi_loader import load_inventory
@@ -31,14 +42,60 @@ def main() -> None:
 
 
 @main.command("check-environment")
-def check_environment() -> None:
-    """Print Python and JMeter availability."""
+@click.option(
+    "--install",
+    is_flag=True,
+    help="Download Apache JMeter 5.6+ into .tools/ if missing",
+)
+@click.option("--jmeter-version", "release_version", default="5.6.3", show_default=True)
+@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
+def check_environment(install: bool, release_version: str, project_root: Path) -> None:
+    """Print Python, Java, and JMeter availability."""
     click.echo(f"Python: {sys.version.split()[0]}")
+    java = find_java()
+    if java:
+        click.echo(f"Java: {java}")
+    else:
+        click.echo("Java: not found (required for JMeter)")
+
+    if install:
+        try:
+            home = ensure_jmeter(version=release_version, project_root=project_root)
+            click.echo(f"JMeter installed at: {home}")
+        except Exception as exc:
+            click.echo(f"JMeter install failed: {exc}", err=True)
+            raise SystemExit(1) from exc
+
     jm = find_jmeter()
     if jm:
-        click.echo(f"JMeter: {jm} (version {jmeter_version(jm)})")
+        click.echo(f"JMeter: {jm} (version {query_jmeter_version(jm)})")
+        click.echo(activation_instructions(project_root))
     else:
-        click.echo("JMeter: not found (use --executor python for local runs)")
+        click.echo("JMeter: not found")
+        click.echo("Install with: api-test-agent install-jmeter")
+        click.echo("Or use --executor python for local runs without JMeter")
+
+
+@main.command("install-jmeter")
+@click.option("--version", "release_version", default="5.6.3", show_default=True)
+@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd())
+@click.option("--force", is_flag=True, help="Re-download even if .tools install exists")
+def install_jmeter_cmd(release_version: str, project_root: Path, force: bool) -> None:
+    """Fetch Apache JMeter into .tools/ and add a PATH shim plus JMETER_HOME helper."""
+    try:
+        home = install_jmeter(
+            version=release_version,
+            project_root=project_root,
+            force=force,
+        )
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    click.echo(f"JMETER_HOME={home}")
+    click.echo(activation_instructions(project_root))
+    ver = query_jmeter_version(str(home / "bin" / "jmeter"))
+    click.echo(f"Verified JMeter version: {ver}")
 
 
 @main.command("inspect")
@@ -131,7 +188,7 @@ def run_cmd(
         seed=model.seed,
         generator_version=model.generator_version,
         python_version=sys.version.split()[0],
-        jmeter_version=jmeter_version(),
+        jmeter_version=query_jmeter_version(),
         profile=profile,
         started_at=utc_now_iso(),
         base_url=model.base_url,
