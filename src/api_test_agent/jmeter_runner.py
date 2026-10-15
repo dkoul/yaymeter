@@ -69,8 +69,8 @@ def run_jmeter(
     jmeter = find_jmeter()
     if not jmeter:
         raise JMeterNotFoundError(
-            "JMeter not found. Run `api-test-agent install-jmeter` or set JMETER_HOME / PATH. "
-            "See `api-test-agent check-environment --help`."
+            "JMeter not found. Run `yaymeter install-runtime` or set JMETER_HOME / PATH. "
+            "See `yaymeter check-environment --help`."
         )
 
     run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"

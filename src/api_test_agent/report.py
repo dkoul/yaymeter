@@ -14,7 +14,7 @@ def render_report(
     coverage: CoverageReport,
     manifest: RunManifest | None = None,
 ) -> str:
-    lines: list[str] = ["# API Test Report", ""]
+    lines: list[str] = ["# Yaymeter API Test Report", ""]
 
     lines.append("## Run summary")
     if manifest:

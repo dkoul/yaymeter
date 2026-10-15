@@ -38,9 +38,9 @@ from api_test_agent.test_design import generate_plan, plan_to_json, validate_pla
 
 
 @click.group()
-@click.version_option(__version__, prog_name="api-test-agent")
+@click.version_option(__version__, prog_name="yaymeter")
 def main() -> None:
-    """OpenAPI-driven API testing with JMeter or Python executor."""
+    """Yaymeter — OpenAPI-driven API testing with JMeter (default) or Python."""
 
 
 @main.command("check-environment")
@@ -54,7 +54,7 @@ def main() -> None:
 def check_environment(install: bool, release_version: str, project_root: Path) -> None:
     """Print readiness for functional (Python) and optional JMeter runs."""
     click.echo(f"Python: {sys.version.split()[0]}")
-    click.echo("Functional tests: ready (default executor is python; no JVM required)")
+    click.echo("Functional tests: use JMeter by default (runtime auto-installs to .tools/ if missing)")
 
     if install:
         try:
@@ -77,7 +77,7 @@ def check_environment(install: bool, release_version: str, project_root: Path) -
         click.echo(f"JMeter: {jm} (version {query_jmeter_version(jm)})")
         click.echo(activation_instructions(project_root))
     else:
-        click.echo("JMeter: not installed (optional; auto-installed when you run with --executor jmeter)")
+        click.echo("JMeter: not installed yet (auto-installed on first `run`; or: install-runtime)")
 
 
 def _install_runtime_cmd(
@@ -185,8 +185,8 @@ def validate_plan_cmd(plan: Path) -> None:
 @click.option(
     "--executor",
     type=click.Choice(["jmeter", "python"]),
-    default="python",
-    help="python (default, no JVM) or jmeter (auto-installs runtime in .tools/ if missing)",
+    default="jmeter",
+    help="jmeter (default; auto-installs portable JRE+JMeter in .tools/) or python",
 )
 @click.option("--run-dir", type=click.Path(path_type=Path), default=Path("results"))
 @click.option("--run-id", default=None, help="Optional run id")

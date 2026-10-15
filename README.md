@@ -1,12 +1,12 @@
-# API Test Agent
+# Yaymeter
 
-OpenAPI-driven functional API testing with deterministic Python planning and Apache JMeter (or Python) execution. Produces evidence-backed Markdown reports with coverage gaps.
+OpenAPI-driven functional and performance API testing with **JMeter by default**. Yaymeter plans tests deterministically in Python, executes with Apache JMeter, and publishes evidence-backed Markdown reports.
 
 ## Requirements
 
 - Python 3.11+
-- **No JVM required** for the default workflow (`run` uses the Python executor).
-- Apache JMeter 5.6+ and Java are optional; the CLI can auto-download both into `.tools/` when you use `--executor jmeter` or the performance profile.
+- **Default executor is JMeter**; first `yaymeter run` auto-downloads a portable JRE + JMeter into `.tools/` (no manual JVM setup).
+- Use `--executor python` for a JVM-free fallback.
 
 ## Install
 
@@ -17,18 +17,19 @@ pip install -e ".[dev]"
 ## Quick start
 
 ```bash
-api-test-agent check-environment
-# run uses Python by default — no install-runtime step needed
-api-test-agent inspect --spec tests/fixtures/bookstore-openapi.yaml
-api-test-agent plan --spec tests/fixtures/bookstore-openapi.yaml --config examples/test-config.yaml --out generated-tests/plan.json
-api-test-agent validate-plan --plan generated-tests/plan.json
-api-test-agent run --plan generated-tests/plan.json --config examples/test-config.yaml --executor python --approve
-api-test-agent report --run-dir results/run-<id> --spec tests/fixtures/bookstore-openapi.yaml
+yaymeter check-environment
+yaymeter inspect --spec tests/fixtures/bookstore-openapi.yaml
+yaymeter plan --spec tests/fixtures/bookstore-openapi.yaml --config examples/test-config.yaml --out generated-tests/plan.json
+yaymeter validate-plan --plan generated-tests/plan.json
+yaymeter run --plan generated-tests/plan.json --config examples/test-config.yaml --approve
+yaymeter report --run-dir results/run-<id> --spec tests/fixtures/bookstore-openapi.yaml
 ```
+
+The `api-test-agent` console script is kept as an alias for `yaymeter`.
 
 ## Claude Code skill
 
-See `.claude/skills/api-test/SKILL.md` for the agent workflow. Skill scripts in `.claude/skills/api-test/scripts/` wrap the CLI.
+See `.claude/skills/yaymeter/SKILL.md`.
 
 ## Safety
 
